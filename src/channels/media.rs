@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    cast::proxies,
+    cast::proxies::{self, media::Item},
     errors::Error,
     message_manager::{CastMessage, CastMessagePayload, MessageManager},
     Lrc,
@@ -20,6 +20,11 @@ const MESSAGE_TYPE_PLAY: &str = "PLAY";
 const MESSAGE_TYPE_PAUSE: &str = "PAUSE";
 const MESSAGE_TYPE_STOP: &str = "STOP";
 const MESSAGE_TYPE_SEEK: &str = "SEEK";
+const MESSAGE_TYPE_QUEUE_REMOVE: &str = "QUEUE_REMOVE";
+const MESSAGE_TYPE_QUEUE_INSERT: &str = "QUEUE_INSERT";
+const MESSAGE_TYPE_QUEUE_GET_ITEMS: &str = "QUEUE_GET_ITEMS";
+const MESSAGE_TYPE_QUEUE_PREV: &str = "QUEUE_PREV";
+const MESSAGE_TYPE_QUEUE_NEXT: &str = "QUEUE_NEXT";
 const MESSAGE_TYPE_MEDIA_STATUS: &str = "MEDIA_STATUS";
 const MESSAGE_TYPE_LOAD_CANCELLED: &str = "LOAD_CANCELLED";
 const MESSAGE_TYPE_LOAD_FAILED: &str = "LOAD_FAILED";
@@ -363,6 +368,7 @@ pub struct StatusEntry {
     /// * `1 << 18` `Unknown`.
     /// Combinations are described as summations; for example, Pause+Seek+StreamVolume+Mute == 15.
     pub supported_media_commands: u32,
+    pub items: Option<Vec<Item>>,
 }
 
 /// Describes the load cancelled error.
@@ -577,7 +583,7 @@ where
 
             current_time: 0_f64,
             autoplay: true,
-            custom_data: proxies::media::CustomData::new(),
+            custom_data: proxies::media::CustomData { queue: None },
         })?;
 
         self.message_manager.send(CastMessage {
@@ -799,6 +805,157 @@ where
         self.receive_status_entry(request_id, media_session_id)
     }
 
+    pub fn queue_remove<S>(
+        &self,
+        destination: S,
+        media_session_id: i32,
+        item_id: i32,
+    ) -> Result<StatusEntry, Error>
+    where
+        S: Into<Cow<'a, str>>,
+    {
+        let request_id = self.message_manager.generate_request_id();
+
+        let payload = serde_json::to_string(&proxies::media::PlaybackQueueRemoveRequest {
+            request_id,
+            media_session_id,
+            typ: MESSAGE_TYPE_QUEUE_REMOVE.to_string(),
+            item_ids: vec![item_id],
+        })?;
+
+        self.message_manager.send(CastMessage {
+            namespace: CHANNEL_NAMESPACE.to_string(),
+            source: self.sender.to_string(),
+            destination: destination.into().to_string(),
+            payload: CastMessagePayload::String(payload),
+        })?;
+
+        self.receive_status_entry(request_id, media_session_id)
+    }
+
+    pub fn queue_insert<S>(
+        &self,
+        destination: S,
+        media_session_id: i32,
+        medias: Vec<Media>,
+    ) -> Result<StatusEntry, Error>
+    where
+        S: Into<Cow<'a, str>>,
+    {
+        let request_id = self.message_manager.generate_request_id();
+
+        let medias = medias
+            .into_iter()
+            .map(|media| proxies::media::Media {
+                content_id: media.content_id.clone(),
+                stream_type: media.stream_type.to_string(),
+                content_type: media.content_type.clone(),
+                metadata: get_metadata(&media),
+                duration: media.duration,
+            })
+            .collect::<Vec<proxies::media::Media>>();
+
+        let items = medias
+            .into_iter()
+            .map(|media| proxies::media::QueueItem {
+                media,
+                auto_play: true,
+                start_time: 0.0,
+                custom_data: proxies::media::CustomData { queue: Some(true) },
+            })
+            .collect();
+
+        let payload = serde_json::to_string(&proxies::media::PlaybackQueueInsertRequest {
+            request_id,
+            media_session_id,
+            typ: MESSAGE_TYPE_QUEUE_INSERT.to_string(),
+            items,
+            current_item_index: None,
+        })?;
+
+        self.message_manager.send(CastMessage {
+            namespace: CHANNEL_NAMESPACE.to_string(),
+            source: self.sender.to_string(),
+            destination: destination.into().to_string(),
+            payload: CastMessagePayload::String(payload),
+        })?;
+
+        self.receive_status_entry(request_id, media_session_id)
+    }
+
+    pub fn get_queue_items<S>(
+        &self,
+        destination: S,
+        media_session_id: i32,
+    ) -> Result<StatusEntry, Error>
+    where
+        S: Into<Cow<'a, str>>,
+    {
+        let request_id = self.message_manager.generate_request_id();
+
+        let payload = serde_json::to_string(&proxies::media::PlaybackGenericRequest {
+            request_id,
+            media_session_id,
+            typ: MESSAGE_TYPE_QUEUE_GET_ITEMS.to_string(),
+            custom_data: proxies::media::CustomData::new(),
+        })?;
+
+        self.message_manager.send(CastMessage {
+            namespace: CHANNEL_NAMESPACE.to_string(),
+            source: self.sender.to_string(),
+            destination: destination.into().to_string(),
+            payload: CastMessagePayload::String(payload),
+        })?;
+
+        self.receive_status_entry(request_id, media_session_id)
+    }
+
+    pub fn previous<S>(&self, destination: S, media_session_id: i32) -> Result<StatusEntry, Error>
+    where
+        S: Into<Cow<'a, str>>,
+    {
+        let request_id = self.message_manager.generate_request_id();
+
+        let payload = serde_json::to_string(&proxies::media::PlaybackGenericRequest {
+            request_id,
+            media_session_id,
+            typ: MESSAGE_TYPE_QUEUE_PREV.to_string(),
+            custom_data: proxies::media::CustomData::new(),
+        })?;
+
+        self.message_manager.send(CastMessage {
+            namespace: CHANNEL_NAMESPACE.to_string(),
+            source: self.sender.to_string(),
+            destination: destination.into().to_string(),
+            payload: CastMessagePayload::String(payload),
+        })?;
+
+        self.receive_status_entry(request_id, media_session_id)
+    }
+
+    pub fn next<S>(&self, destination: S, media_session_id: i32) -> Result<StatusEntry, Error>
+    where
+        S: Into<Cow<'a, str>>,
+    {
+        let request_id = self.message_manager.generate_request_id();
+
+        let payload = serde_json::to_string(&proxies::media::PlaybackGenericRequest {
+            request_id,
+            media_session_id,
+            typ: MESSAGE_TYPE_QUEUE_NEXT.to_string(),
+            custom_data: proxies::media::CustomData::new(),
+        })?;
+
+        self.message_manager.send(CastMessage {
+            namespace: CHANNEL_NAMESPACE.to_string(),
+            source: self.sender.to_string(),
+            destination: destination.into().to_string(),
+            payload: CastMessagePayload::String(payload),
+        })?;
+
+        self.receive_status_entry(request_id, media_session_id)
+    }
+
     pub fn can_handle(&self, message: &CastMessage) -> bool {
         message.namespace == CHANNEL_NAMESPACE
     }
@@ -846,6 +1003,17 @@ where
                             .map(|reason| IdleReason::from_str(reason).unwrap()),
                         current_time: x.current_time,
                         supported_media_commands: x.supported_media_commands,
+                        items: x.items.as_ref().map(|items| {
+                            items
+                                .iter()
+                                .map(|item| Item {
+                                    item_id: item.item_id,
+                                    media: item.clone().media,
+                                    auto_play: item.auto_play,
+                                    custom_data: item.clone().custom_data,
+                                })
+                                .collect::<Vec<Item>>()
+                        }),
                     }
                 });
 
@@ -945,4 +1113,56 @@ where
             Ok(None)
         })
     }
+}
+
+fn get_metadata(media: &Media) -> Option<proxies::media::Metadata> {
+    media.metadata.as_ref().map(|m| match *m {
+        Metadata::Generic(ref x) => proxies::media::Metadata {
+            title: x.title.clone(),
+            subtitle: x.subtitle.clone(),
+            images: x.images.iter().map(|i| i.encode()).collect(),
+            release_date: x.release_date.clone(),
+            ..proxies::media::Metadata::new(0)
+        },
+        Metadata::Movie(ref x) => proxies::media::Metadata {
+            title: x.title.clone(),
+            subtitle: x.subtitle.clone(),
+            studio: x.studio.clone(),
+            images: x.images.iter().map(|i| i.encode()).collect(),
+            release_date: x.release_date.clone(),
+            ..proxies::media::Metadata::new(1)
+        },
+        Metadata::TvShow(ref x) => proxies::media::Metadata {
+            series_title: x.series_title.clone(),
+            subtitle: x.episode_title.clone(),
+            season: x.season,
+            episode: x.episode,
+            images: x.images.iter().map(|i| i.encode()).collect(),
+            original_air_date: x.original_air_date.clone(),
+            ..proxies::media::Metadata::new(2)
+        },
+        Metadata::MusicTrack(ref x) => proxies::media::Metadata {
+            album_name: x.album_name.clone(),
+            title: x.title.clone(),
+            album_artist: x.album_artist.clone(),
+            artist: x.artist.clone(),
+            composer: x.composer.clone(),
+            track_number: x.track_number,
+            disc_number: x.disc_number,
+            images: x.images.iter().map(|i| i.encode()).collect(),
+            release_date: x.release_date.clone(),
+            ..proxies::media::Metadata::new(3)
+        },
+        Metadata::Photo(ref x) => proxies::media::Metadata {
+            title: x.title.clone(),
+            artist: x.artist.clone(),
+            location: x.location.clone(),
+            latitude: x.latitude_longitude.map(|coord| coord.0),
+            longitude: x.latitude_longitude.map(|coord| coord.1),
+            width: x.dimensions.map(|dims| dims.0),
+            height: x.dimensions.map(|dims| dims.1),
+            creation_date_time: x.creation_date_time.clone(),
+            ..proxies::media::Metadata::new(4)
+        },
+    })
 }

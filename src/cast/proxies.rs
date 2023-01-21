@@ -76,6 +76,39 @@ pub mod media {
     }
 
     #[derive(Serialize, Debug)]
+    pub struct PlaybackQueueRemoveRequest {
+        #[serde(rename = "requestId")]
+        pub request_id: i32,
+
+        #[serde(rename = "mediaSessionId")]
+        pub media_session_id: i32,
+
+        #[serde(rename = "type")]
+        pub typ: String,
+
+        #[serde(rename = "itemIds")]
+        pub item_ids: Vec<i32>,
+    }
+
+    #[derive(Serialize, Debug)]
+    pub struct PlaybackQueueInsertRequest {
+        #[serde(rename = "requestId")]
+        pub request_id: i32,
+
+        #[serde(rename = "mediaSessionId")]
+        pub media_session_id: i32,
+
+        #[serde(rename = "type")]
+        pub typ: String,
+
+        #[serde(rename = "items")]
+        pub items: Vec<QueueItem>,
+
+        #[serde(rename = "currentItemIndex", skip_serializing_if = "Option::is_none")]
+        pub current_item_index: Option<i32>,
+    }
+
+    #[derive(Serialize, Debug)]
     pub struct PlaybackSeekRequest {
         #[serde(rename = "requestId")]
         pub request_id: i32,
@@ -96,7 +129,36 @@ pub mod media {
         pub custom_data: CustomData,
     }
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Debug)]
+    pub struct QueueItem {
+        pub media: Media,
+
+        #[serde(rename = "autoplay")]
+        pub auto_play: bool,
+
+        #[serde(rename = "startTime")]
+        pub start_time: f32,
+
+        #[serde(rename = "customData")]
+        pub custom_data: CustomData,
+    }
+
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct Item {
+        #[serde(rename = "itemId")]
+        pub item_id: i32,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub media: Option<Media>,
+
+        #[serde(rename = "autoplay")]
+        pub auto_play: bool,
+
+        #[serde(rename = "customData")]
+        pub custom_data: CustomData,
+    }
+
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Media {
         #[serde(rename = "contentId")]
         pub content_id: String,
@@ -110,7 +172,7 @@ pub mod media {
         pub duration: Option<f32>,
     }
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Metadata {
         #[serde(rename = "metadataType")]
         pub metadata_type: u32,
@@ -207,7 +269,7 @@ pub mod media {
         }
     }
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Image {
         pub url: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -216,12 +278,15 @@ pub mod media {
         pub height: Option<u32>,
     }
 
-    #[derive(Serialize, Debug)]
-    pub struct CustomData {}
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    pub struct CustomData {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub queue: Option<bool>,
+    }
 
     impl CustomData {
         pub fn new() -> CustomData {
-            CustomData {}
+            CustomData { queue: None }
         }
     }
 
@@ -241,6 +306,7 @@ pub mod media {
         pub current_time: Option<f32>,
         #[serde(rename = "supportedMediaCommands")]
         pub supported_media_commands: u32,
+        pub items: Option<Vec<Item>>,
     }
 
     #[derive(Deserialize, Debug)]
