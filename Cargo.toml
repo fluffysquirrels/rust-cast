@@ -17,6 +17,10 @@ exclude = [
     "protobuf/*",
 ]
 
+[[example]]
+name = "rust_caster"
+path = "examples/rust_caster.rs"
+
 [dependencies]
 byteorder = "1.4.3"
 log = "0.4.17"

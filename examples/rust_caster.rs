@@ -26,7 +26,7 @@ use rust_cast::{
 const DEFAULT_DESTINATION_ID: &str = "receiver-0";
 
 const USAGE: &str = "
-Usage: rust-caster [-v] [-h] [-a <address>] [-p <port>] [-i | -r <app to run> | -s <app to stop> | --stop-current | [-m <media handle> [--media-type <media type>] [--media-stream-type <stream type>] [--media-app <media app>]] | [--media-volume <level> | --media-mute| --media-unmute | --media-pause | --media-play | --media-stop | --media-seek <time>] [--media-app <media app>]]
+Usage: rust-caster [-v] [-h] [-a <address>] [-p <port>] [-i | -r <app to run> | -s <app to stop> | --stop-current | [-m <media handle> [--media-type <media type>] [--media-stream-type <stream type>] [--media-app <media app>]] | [--media-volume <level> | --media-mute| --media-unmute | --media-pause | --media-play | --media-stop | --media-seek <time> | --media-next | --media-prev | --media-insert <media handle> | --media-current | --media-remove <position> ] [--media-app <media app>] ]
 
 Options:
     -a, --address <address>                 Cast device network address.
@@ -46,6 +46,11 @@ Options:
         --media-play                        Play currently paused media in the app that is passed in `--media-app`.
         --media-stop                        Stops currently active media in the app that is passed in `--media-app`.
         --media-seek <time>                 Sets the current position in the media stream in the app that is passed in `--media-app`.
+        --media-next                        Skips to the next item in the queue.
+        --media-prev                        Skips to the previous item in the queue.
+        --media-insert <media_handle>       Inserts the media into the queue.
+        --media-current                     Returns the current media status.
+        --media-remove <position>           Removes the media from the queue.
     -v, --verbose                           Toggle verbose output.
     -h, --help                              Print this help menu.
 ";
@@ -69,6 +74,11 @@ struct Args {
     flag_media_play: bool,
     flag_media_stop: bool,
     flag_media_seek: Option<f32>,
+    flag_media_next: bool,
+    flag_media_prev: bool,
+    flag_media_insert: Option<String>,
+    flag_media_current: bool,
+    flag_media_remove: Option<i32>,
 }
 
 fn print_info(device: &CastDevice) {
@@ -338,6 +348,11 @@ fn main() {
         || args.flag_media_play
         || args.flag_media_stop
         || args.flag_media_seek.is_some()
+        || args.flag_media_next
+        || args.flag_media_prev
+        || args.flag_media_insert.is_some()
+        || args.flag_media_current
+        || args.flag_media_remove.is_some()
     {
         let app_to_manage = CastDeviceApp::from_str(args.flag_media_app.as_str()).unwrap();
         let status = cast_device.receiver.get_status().unwrap();
@@ -392,6 +407,55 @@ fn main() {
                                 status.media_session_id,
                                 Some(args.flag_media_seek.unwrap()),
                                 None,
+                            )
+                            .unwrap(),
+                    );
+                } else if args.flag_media_next {
+                    status_entry = Some(
+                        cast_device
+                            .media
+                            .next(app.transport_id.as_str(), status.media_session_id)
+                            .unwrap(),
+                    );
+                } else if args.flag_media_prev {
+                    status_entry = Some(
+                        cast_device
+                            .media
+                            .previous(app.transport_id.as_str(), status.media_session_id)
+                            .unwrap(),
+                    );
+                } else if let Some(media) = args.flag_media_insert {
+                    let media_type = args.flag_media_type.unwrap_or_default();
+
+                    let media_stream_type = match args.flag_media_stream_type.as_str() {
+                        value @ "buffered" | value @ "live" | value @ "none" => {
+                            StreamType::from_str(value).unwrap()
+                        }
+                        _ => panic!("Unsupported stream type {}!", args.flag_media_stream_type),
+                    };
+                    let items = vec![Media {
+                        content_id: media,
+                        content_type: media_type,
+                        stream_type: media_stream_type,
+                        duration: None,
+                        metadata: None,
+                    }];
+                    status_entry = Some(
+                        cast_device
+                            .media
+                            .queue_insert(app.transport_id.as_str(), status.media_session_id, items)
+                            .unwrap(),
+                    )
+                } else if args.flag_media_current {
+                    println!("{:?}", status);
+                } else if let Some(position) = args.flag_media_remove {
+                    status_entry = Some(
+                        cast_device
+                            .media
+                            .queue_remove(
+                                app.transport_id.as_str(),
+                                status.media_session_id,
+                                position,
                             )
                             .unwrap(),
                     );
