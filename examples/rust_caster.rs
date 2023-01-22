@@ -26,7 +26,7 @@ use rust_cast::{
 const DEFAULT_DESTINATION_ID: &str = "receiver-0";
 
 const USAGE: &str = "
-Usage: rust-caster [-v] [-h] [-a <address>] [-p <port>] [-i | -r <app to run> | -s <app to stop> | --stop-current | [-m <media handle> [--media-type <media type>] [--media-stream-type <stream type>] [--media-app <media app>]] | [--media-volume <level> | --media-mute| --media-unmute | --media-pause | --media-play | --media-stop | --media-seek <time> | --media-next | --media-prev | --media-insert <media handle> | --media-current | --media-remove <position> ] [--media-app <media app>] ]
+Usage: rust-caster [-v] [-h] [-a <address>] [-p <port>] [-i | -r <app to run> | -s <app to stop> | --stop-current | [-m <media handle> [--media-type <media type>] [--media-stream-type <stream type>] [--media-app <media app>]] | [--media-volume <level> | --media-mute| --media-unmute | --media-pause | --media-play | --media-stop | --media-seek <time> | --media-next | --media-prev | --media-insert <media handle> | --media-current | --media-remove <position> | --media-queue <media_handle> ] [--media-app <media app>] ]
 
 Options:
     -a, --address <address>                 Cast device network address.
@@ -51,6 +51,7 @@ Options:
         --media-insert <media_handle>       Inserts the media into the queue.
         --media-current                     Returns the current media status.
         --media-remove <position>           Removes the media from the queue.
+        --media-queue <media_handle>        Loads the media into the queue.
     -v, --verbose                           Toggle verbose output.
     -h, --help                              Print this help menu.
 ";
@@ -79,6 +80,7 @@ struct Args {
     flag_media_insert: Option<String>,
     flag_media_current: bool,
     flag_media_remove: Option<i32>,
+    flag_media_queue: Option<String>,
 }
 
 fn print_info(device: &CastDevice) {
@@ -523,6 +525,41 @@ fn main() {
                 );
             }
         }
+        return;
+    }
+
+    if let Some(media) = args.flag_media_queue {
+        let media_type = args.flag_media_type.unwrap_or_default();
+
+        let media_stream_type = match args.flag_media_stream_type.as_str() {
+            value @ "buffered" | value @ "live" | value @ "none" => {
+                StreamType::from_str(value).unwrap()
+            }
+            _ => panic!("Unsupported stream type {}!", args.flag_media_stream_type),
+        };
+
+        let app = cast_device
+            .receiver
+            .launch_app(&CastDeviceApp::from_str("default").unwrap())
+            .unwrap();
+
+        cast_device
+            .connection
+            .connect(app.transport_id.as_str())
+            .unwrap();
+
+        let items = vec![Media {
+            content_id: media,
+            content_type: media_type,
+            stream_type: media_stream_type,
+            duration: None,
+            metadata: None,
+        }];
+        cast_device
+            .media
+            .queue_load(app.transport_id.as_str(), items, Some(0), None)
+            .unwrap();
+
         return;
     }
 

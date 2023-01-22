@@ -908,11 +908,10 @@ where
     pub fn queue_load<S>(
         &self,
         destination: S,
-        media_session_id: i32,
         medias: Vec<Media>,
         start_index: Option<i32>,
         repeat_mode: Option<RepeatMode>,
-    ) -> Result<StatusEntry, Error>
+    ) -> Result<(), Error>
     where
         S: Into<Cow<'a, str>>,
     {
@@ -941,7 +940,6 @@ where
 
         let payload = serde_json::to_string(&proxies::media::PlaybackQueueLoadRequest {
             request_id,
-            media_session_id,
             typ: MESSAGE_TYPE_QUEUE_LOAD.to_string(),
             items,
             start_index,
@@ -955,7 +953,7 @@ where
             payload: CastMessagePayload::String(payload),
         })?;
 
-        self.receive_status_entry(request_id, media_session_id)
+        Ok(())
     }
 
     pub fn get_queue_items<S>(
