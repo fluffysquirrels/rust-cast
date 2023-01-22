@@ -443,7 +443,12 @@ fn main() {
                     status_entry = Some(
                         cast_device
                             .media
-                            .queue_insert(app.transport_id.as_str(), status.media_session_id, items)
+                            .queue_insert(
+                                app.transport_id.as_str(),
+                                status.media_session_id,
+                                items,
+                                None,
+                            )
                             .unwrap(),
                     )
                 } else if args.flag_media_current {

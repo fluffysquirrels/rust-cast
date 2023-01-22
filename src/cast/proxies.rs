@@ -106,6 +106,9 @@ pub mod media {
 
         #[serde(rename = "currentItemIndex", skip_serializing_if = "Option::is_none")]
         pub current_item_index: Option<i32>,
+
+        #[serde(rename = "insertBefore", skip_serializing_if = "Option::is_none")]
+        pub insert_before: Option<i32>,
     }
 
     #[derive(Serialize, Debug)]

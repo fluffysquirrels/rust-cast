@@ -838,6 +838,7 @@ where
         destination: S,
         media_session_id: i32,
         medias: Vec<Media>,
+        insert_before: Option<i32>,
     ) -> Result<StatusEntry, Error>
     where
         S: Into<Cow<'a, str>>,
@@ -871,6 +872,7 @@ where
             typ: MESSAGE_TYPE_QUEUE_INSERT.to_string(),
             items,
             current_item_index: None,
+            insert_before,
         })?;
 
         self.message_manager.send(CastMessage {
