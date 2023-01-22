@@ -112,6 +112,27 @@ pub mod media {
     }
 
     #[derive(Serialize, Debug)]
+    pub struct PlaybackQueueLoadRequest {
+        #[serde(rename = "requestId")]
+        pub request_id: i32,
+
+        #[serde(rename = "mediaSessionId")]
+        pub media_session_id: i32,
+
+        #[serde(rename = "type")]
+        pub typ: String,
+
+        #[serde(rename = "items")]
+        pub items: Vec<QueueItem>,
+
+        #[serde(rename = "startIndex", skip_serializing_if = "Option::is_none")]
+        pub start_index: Option<i32>,
+
+        #[serde(rename = "repeatMode", skip_serializing_if = "Option::is_none")]
+        pub repeat_mode: Option<String>,
+    }
+
+    #[derive(Serialize, Debug)]
     pub struct PlaybackSeekRequest {
         #[serde(rename = "requestId")]
         pub request_id: i32,
