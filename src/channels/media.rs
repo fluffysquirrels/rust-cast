@@ -1056,38 +1056,61 @@ where
             MESSAGE_TYPE_MEDIA_STATUS => {
                 let reply: proxies::media::StatusReply = serde_json::value::from_value(reply)?;
 
-                let statuses_entries = reply.status.iter().map(|x| {
-                    StatusEntry {
-                        media_session_id: x.media_session_id,
-                        media: x.media.as_ref().map(|m| {
-                            Media {
-                                content_id: m.content_id.to_string(),
-                                stream_type: StreamType::from_str(m.stream_type.as_ref()).unwrap(),
-                                content_type: m.content_type.to_string(),
-                                metadata: None, // TODO
-                                duration: m.duration,
+                let statuses_entries = reply.status.iter().map(|x| StatusEntry {
+                    media_session_id: x.media_session_id,
+                    media: x.media.as_ref().map(|m| {
+                        let metadata = match m.metadata {
+                            Some(ref metadata) => {
+                                Some(Metadata::MusicTrack(MusicTrackMediaMetadata {
+                                    album_name: metadata.album_name.clone(),
+                                    album_artist: metadata.album_artist.clone(),
+                                    artist: metadata.artist.clone(),
+                                    title: metadata.title.clone(),
+                                    track_number: metadata.track_number.clone(),
+                                    composer: metadata.composer.clone(),
+                                    disc_number: metadata.disc_number.clone(),
+                                    images: metadata
+                                        .images
+                                        .clone()
+                                        .into_iter()
+                                        .map(|i| Image {
+                                            url: i.url,
+                                            dimensions: None,
+                                        })
+                                        .collect(),
+                                    release_date: metadata.release_date.clone(),
+                                }))
                             }
-                        }),
-                        playback_rate: x.playback_rate,
-                        player_state: PlayerState::from_str(x.player_state.as_ref()).unwrap(),
-                        idle_reason: x
-                            .idle_reason
-                            .as_ref()
-                            .map(|reason| IdleReason::from_str(reason).unwrap()),
-                        current_time: x.current_time,
-                        supported_media_commands: x.supported_media_commands,
-                        items: x.items.as_ref().map(|items| {
-                            items
-                                .iter()
-                                .map(|item| Item {
-                                    item_id: item.item_id,
-                                    media: item.clone().media,
-                                    auto_play: item.auto_play,
-                                    custom_data: item.clone().custom_data,
-                                })
-                                .collect::<Vec<Item>>()
-                        }),
-                    }
+                            None => None,
+                        };
+
+                        Media {
+                            content_id: m.content_id.to_string(),
+                            stream_type: StreamType::from_str(m.stream_type.as_ref()).unwrap(),
+                            content_type: m.content_type.to_string(),
+                            metadata,
+                            duration: m.duration,
+                        }
+                    }),
+                    playback_rate: x.playback_rate,
+                    player_state: PlayerState::from_str(x.player_state.as_ref()).unwrap(),
+                    idle_reason: x
+                        .idle_reason
+                        .as_ref()
+                        .map(|reason| IdleReason::from_str(reason).unwrap()),
+                    current_time: x.current_time,
+                    supported_media_commands: x.supported_media_commands,
+                    items: x.items.as_ref().map(|items| {
+                        items
+                            .iter()
+                            .map(|item| Item {
+                                item_id: item.item_id,
+                                media: item.clone().media,
+                                auto_play: item.auto_play,
+                                custom_data: item.clone().custom_data,
+                            })
+                            .collect::<Vec<Item>>()
+                    }),
                 });
 
                 MediaResponse::Status(Status {
