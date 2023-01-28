@@ -389,6 +389,7 @@ pub struct StatusEntry {
     /// Combinations are described as summations; for example, Pause+Seek+StreamVolume+Mute == 15.
     pub supported_media_commands: u32,
     pub items: Option<Vec<Item>>,
+    pub current_item_id: Option<i32>,
 }
 
 /// Describes the load cancelled error.
@@ -1099,6 +1100,7 @@ where
                         .as_ref()
                         .map(|reason| IdleReason::from_str(reason).unwrap()),
                     current_time: x.current_time,
+                    current_item_id: x.current_item_id,
                     supported_media_commands: x.supported_media_commands,
                     items: x.items.as_ref().map(|items| {
                         items

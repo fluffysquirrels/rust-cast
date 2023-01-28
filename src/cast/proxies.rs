@@ -325,6 +325,8 @@ pub mod media {
         pub idle_reason: Option<String>,
         #[serde(rename = "currentTime")]
         pub current_time: Option<f32>,
+        #[serde(rename = "currentItemId")]
+        pub current_item_id: Option<i32>,
         #[serde(rename = "supportedMediaCommands")]
         pub supported_media_commands: u32,
         pub items: Option<Vec<Item>>,
