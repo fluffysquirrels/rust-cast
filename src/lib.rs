@@ -6,9 +6,9 @@ pub mod errors;
 pub mod message_manager;
 mod utils;
 
-use std::{borrow::Cow, net::TcpStream};
+use std::{borrow::Cow, net::TcpStream, sync::Arc};
 
-use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 
 use channels::{
     connection::{ConnectionChannel, ConnectionResponse},
@@ -20,6 +20,7 @@ use channels::{
 use errors::Error;
 
 use message_manager::{CastMessage, MessageManager};
+use rustls::{ClientConnection, OwnedTrustAnchor, RootCertStore, StreamOwned};
 
 const DEFAULT_SENDER_ID: &str = "sender-0";
 const DEFAULT_RECEIVER_ID: &str = "receiver-0";
@@ -47,19 +48,19 @@ pub enum ChannelMessage {
 
 /// Structure that manages connection to a cast device.
 pub struct CastDevice<'a> {
-    message_manager: Lrc<MessageManager<SslStream<TcpStream>>>,
+    message_manager: Lrc<MessageManager<StreamOwned<ClientConnection, TcpStream>>>,
 
     /// Channel that manages connection responses/requests.
-    pub connection: ConnectionChannel<'a, SslStream<TcpStream>>,
+    pub connection: ConnectionChannel<'a, StreamOwned<ClientConnection, TcpStream>>,
 
     /// Channel that allows connection to stay alive (via ping-pong requests/responses).
-    pub heartbeat: HeartbeatChannel<'a, SslStream<TcpStream>>,
+    pub heartbeat: HeartbeatChannel<'a, StreamOwned<ClientConnection, TcpStream>>,
 
     /// Channel that manages various media stuff.
-    pub media: MediaChannel<'a, SslStream<TcpStream>>,
+    pub media: MediaChannel<'a, StreamOwned<ClientConnection, TcpStream>>,
 
     /// Channel that manages receiving platform (e.g. Chromecast).
-    pub receiver: ReceiverChannel<'a, SslStream<TcpStream>>,
+    pub receiver: ReceiverChannel<'a, StreamOwned<ClientConnection, TcpStream>>,
 }
 
 impl<'a> CastDevice<'a> {
@@ -99,10 +100,32 @@ impl<'a> CastDevice<'a> {
             port
         );
 
-        let connector = SslConnector::builder(SslMethod::tls())?.build();
+        let mut root_store = RootCertStore::empty();
+        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+            OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        }));
+
+        let mut config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        // Enable early data.
+        config.enable_early_data = true;
+        let config = Arc::new(config);
+
+        let server_name = host.as_ref().try_into().expect("invalid DNS name");
+        let conn = rustls::ClientConnection::new(Arc::clone(&config), server_name).unwrap();
+
         let tcp_stream = TcpStream::connect((host.as_ref(), port))?;
 
-        CastDevice::connect_to_device(connector.connect(host.as_ref(), tcp_stream)?)
+        let stream = rustls::StreamOwned::new(conn, tcp_stream);
+
+        CastDevice::connect_to_device(stream)
     }
 
     /// Connects to the cast device using host name and port _without_ host verification. Use on
@@ -145,7 +168,7 @@ impl<'a> CastDevice<'a> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         builder.set_verify(SslVerifyMode::NONE);
 
-        let connector = builder.build();
+        let _connector = builder.build();
         let tcp_stream = TcpStream::connect((host.as_ref(), port))?;
 
         log::debug!(
@@ -154,7 +177,30 @@ impl<'a> CastDevice<'a> {
             port
         );
 
-        CastDevice::connect_to_device(connector.connect(host.as_ref(), tcp_stream)?)
+        let mut root_store = RootCertStore::empty();
+        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+            OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        }));
+
+        let mut config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        // Enable early data.
+        config.enable_early_data = true;
+        let config = Arc::new(config);
+
+        let server_name = host.as_ref().try_into().expect("invalid DNS name");
+        let conn = rustls::ClientConnection::new(Arc::clone(&config), server_name).unwrap();
+
+        let tls = rustls::StreamOwned::new(conn, tcp_stream);
+
+        CastDevice::connect_to_device(tls)
     }
 
     /// Waits for any message returned by cast device (e.g. Chromecast) and returns its parsed
@@ -221,7 +267,9 @@ impl<'a> CastDevice<'a> {
     /// # Return value
     ///
     /// Instance of `CastDevice` that allows you to manage connection.
-    fn connect_to_device(ssl_stream: SslStream<TcpStream>) -> Result<CastDevice<'a>, Error> {
+    fn connect_to_device(
+        ssl_stream: StreamOwned<ClientConnection, TcpStream>,
+    ) -> Result<CastDevice<'a>, Error> {
         let message_manager_rc = Lrc::new(MessageManager::new(ssl_stream));
 
         let heartbeat = HeartbeatChannel::new(
