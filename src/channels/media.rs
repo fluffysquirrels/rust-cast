@@ -604,6 +604,7 @@ where
 
             current_time: 0_f64,
             autoplay: true,
+            preload_time: 20_f64,
             custom_data: proxies::media::CustomData { queue: None },
         })?;
 

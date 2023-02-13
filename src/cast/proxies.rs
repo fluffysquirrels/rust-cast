@@ -58,6 +58,9 @@ pub mod media {
         pub custom_data: CustomData,
 
         pub autoplay: bool,
+
+        #[serde(rename = "preloadTime")]
+        pub preload_time: f64,
     }
 
     #[derive(Serialize, Debug)]
