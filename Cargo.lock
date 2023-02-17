@@ -57,6 +57,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "chromecast"
+version = "0.18.1"
+dependencies = [
+ "ansi_term",
+ "byteorder",
+ "docopt",
+ "env_logger",
+ "log",
+ "openssl",
+ "protobuf",
+ "protobuf-codegen",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
 name = "docopt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -396,23 +413,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
 dependencies = [
  "winapi",
-]
-
-[[package]]
-name = "rust_cast"
-version = "0.18.1"
-dependencies = [
- "ansi_term",
- "byteorder",
- "docopt",
- "env_logger",
- "log",
- "openssl",
- "protobuf",
- "protobuf-codegen",
- "serde",
- "serde_derive",
- "serde_json",
 ]
 
 [[package]]
