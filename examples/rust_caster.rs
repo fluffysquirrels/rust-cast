@@ -3,7 +3,7 @@ extern crate docopt;
 extern crate env_logger;
 #[macro_use]
 extern crate log;
-extern crate rust_cast;
+extern crate chromecast as rust_cast;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;

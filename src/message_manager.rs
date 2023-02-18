@@ -270,11 +270,9 @@ where
 
         limited_reader.read_to_end(&mut buffer)?;
 
-        println!("Buffer: {:?}", buffer);
         let raw_message = utils::from_vec::<cast_channel::CastMessage>(buffer.to_vec())?;
 
         log::debug!("Message received: {:?}", raw_message);
-        println!("Message received: {:?}\n", raw_message);
 
         Ok(CastMessage {
             namespace: raw_message.namespace().to_string(),
