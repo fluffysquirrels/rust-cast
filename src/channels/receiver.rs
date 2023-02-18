@@ -440,6 +440,7 @@ where
     pub fn parse(&self, message: &CastMessage) -> Result<ReceiverResponse, Error> {
         let reply = match message.payload {
             CastMessagePayload::String(ref payload) => {
+                println!(">> payload: {}", payload.as_str());
                 serde_json::from_str::<serde_json::Value>(payload)?
             }
             _ => {
