@@ -39,11 +39,12 @@ openssl = { version = "0.10.45", features = ["vendored"] }
 [dependencies]
 byteorder = "1.4.3"
 log = "0.4.17"
-openssl = "0.10.45"
 protobuf = "=3.2.0"
+rustls = { version = "0.21.0", features = ["dangerous_configuration"] }
 serde = "1.0.152"
 serde_derive = "1.0.152"
 serde_json = "1.0.91"
+webpki-roots = "0.22.6"
 
 [dev-dependencies]
 ansi_term = "0.12.1"
