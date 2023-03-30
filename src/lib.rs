@@ -8,8 +8,6 @@ mod utils;
 
 use std::{borrow::Cow, net::TcpStream, sync::Arc};
 
-use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
-
 use channels::{
     connection::{ConnectionChannel, ConnectionResponse},
     heartbeat::{HeartbeatChannel, HeartbeatResponse},
@@ -29,6 +27,22 @@ const DEFAULT_RECEIVER_ID: &str = "receiver-0";
 type Lrc<T> = std::sync::Arc<T>;
 #[cfg(not(feature = "thread_safe"))]
 type Lrc<T> = std::rc::Rc<T>;
+
+struct NoCertificateVerification {}
+
+impl rustls::client::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
+}
 
 /// Supported channel message types.
 #[derive(Clone, Debug)]
@@ -116,6 +130,9 @@ impl<'a> CastDevice<'a> {
 
         // Enable early data.
         config.enable_early_data = true;
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
         let config = Arc::new(config);
 
         let server_name = host.as_ref().try_into().expect("invalid DNS name");
@@ -165,10 +182,6 @@ impl<'a> CastDevice<'a> {
             port
         );
 
-        let mut builder = SslConnector::builder(SslMethod::tls())?;
-        builder.set_verify(SslVerifyMode::NONE);
-
-        let _connector = builder.build();
         let tcp_stream = TcpStream::connect((host.as_ref(), port))?;
 
         log::debug!(
@@ -193,6 +206,9 @@ impl<'a> CastDevice<'a> {
 
         // Enable early data.
         config.enable_early_data = true;
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoCertificateVerification {}));
         let config = Arc::new(config);
 
         let server_name = host.as_ref().try_into().expect("invalid DNS name");
