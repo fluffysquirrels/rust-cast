@@ -1,12 +1,19 @@
-#![deny(warnings)]
+// #![deny(warnings)]
 
+pub mod async_client;
 mod cast;
 pub mod channels;
 pub mod errors;
+mod json_payload;
+mod message;
 pub mod message_manager;
+mod types;
+mod util;
 mod utils;
 
-use std::{borrow::Cow, net::TcpStream, sync::Arc};
+// use std::{borrow::Cow, net::TcpStream, sync::Arc};
+use std::{net::TcpStream};
+
 
 use channels::{
     connection::{ConnectionChannel, ConnectionResponse},
@@ -15,10 +22,13 @@ use channels::{
     receiver::{ReceiverChannel, ReceiverResponse},
 };
 
-use errors::Error;
+// use errors::Error;
 
 use message_manager::{CastMessage, MessageManager};
-use rustls::{ClientConnection, OwnedTrustAnchor, RootCertStore, StreamOwned};
+
+// use rustls::{ClientConnection, OwnedTrustAnchor, RootCertStore, StreamOwned};
+use rustls::{ClientConnection, StreamOwned};
+
 
 const DEFAULT_SENDER_ID: &str = "sender-0";
 const DEFAULT_RECEIVER_ID: &str = "receiver-0";
@@ -28,21 +38,6 @@ type Lrc<T> = std::sync::Arc<T>;
 #[cfg(not(feature = "thread_safe"))]
 type Lrc<T> = std::rc::Rc<T>;
 
-struct NoCertificateVerification {}
-
-impl rustls::client::ServerCertVerifier for NoCertificateVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
-    }
-}
 
 /// Supported channel message types.
 #[derive(Clone, Debug)]
@@ -75,6 +70,41 @@ pub struct CastDevice<'a> {
 
     /// Channel that manages receiving platform (e.g. Chromecast).
     pub receiver: ReceiverChannel<'a, StreamOwned<ClientConnection, TcpStream>>,
+}
+
+
+#[cfg(test)]
+pub(crate) mod tests {
+    #[test]
+    #[cfg(feature = "thread_safe")]
+    fn test_thread_safe() {
+        use crate::CastDevice;
+
+        fn is_sync<T: Sync>() {}
+        fn is_send<T: Send>() {}
+
+        is_sync::<CastDevice>();
+        is_send::<CastDevice>();
+    }
+}
+
+
+#[cfg(any())] // Disabled
+mod boop {
+struct NoCertificateVerification {}
+
+impl rustls::client::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
 }
 
 impl<'a> CastDevice<'a> {
@@ -311,17 +341,4 @@ impl<'a> CastDevice<'a> {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    #[test]
-    #[cfg(feature = "thread_safe")]
-    fn test_thread_safe() {
-        use crate::CastDevice;
-
-        fn is_sync<T: Sync>() {}
-        fn is_send<T: Send>() {}
-
-        is_sync::<CastDevice>();
-        is_send::<CastDevice>();
-    }
 }

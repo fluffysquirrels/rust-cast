@@ -15,20 +15,20 @@ use crate::{
     Lrc,
 };
 
-const CHANNEL_NAMESPACE: &str = "urn:x-cast:com.google.cast.receiver";
+pub(crate) const CHANNEL_NAMESPACE: &str = "urn:x-cast:com.google.cast.receiver";
 
-const MESSAGE_TYPE_LAUNCH: &str = "LAUNCH";
-const MESSAGE_TYPE_STOP: &str = "STOP";
-const MESSAGE_TYPE_GET_STATUS: &str = "GET_STATUS";
-const MESSAGE_TYPE_SET_VOLUME: &str = "SET_VOLUME";
+pub(crate) const MESSAGE_TYPE_LAUNCH: &str = "LAUNCH";
+pub(crate) const MESSAGE_TYPE_STOP: &str = "STOP";
+pub(crate) const MESSAGE_TYPE_GET_STATUS: &str = "GET_STATUS";
+pub(crate) const MESSAGE_TYPE_SET_VOLUME: &str = "SET_VOLUME";
 
-const MESSAGE_TYPE_RECEIVER_STATUS: &str = "RECEIVER_STATUS";
-const MESSAGE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
-const MESSAGE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
+pub(crate) const MESSAGE_TYPE_RECEIVER_STATUS: &str = "RECEIVER_STATUS";
+pub(crate) const MESSAGE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
+pub(crate) const MESSAGE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
 
-const APP_DEFAULT_MEDIA_RECEIVER_ID: &str = "CC1AD845";
-const APP_BACKDROP_ID: &str = "E8C28D3C";
-const APP_YOUTUBE_ID: &str = "233637DE";
+pub(crate) const APP_DEFAULT_MEDIA_RECEIVER_ID: &str = "CC1AD845";
+pub(crate) const APP_BACKDROP_ID: &str = "E8C28D3C";
+pub(crate) const APP_YOUTUBE_ID: &str = "233637DE";
 
 /// Structure that describes possible cast device volume options.
 #[derive(Copy, Clone, Debug)]
@@ -438,6 +438,10 @@ where
     }
 
     pub fn parse(&self, message: &CastMessage) -> Result<ReceiverResponse, Error> {
+        Self::parse_static(message)
+    }
+
+    pub fn parse_static(message: &CastMessage) -> Result<ReceiverResponse, Error> {
         let reply = match message.payload {
             CastMessagePayload::String(ref payload) => {
                 serde_json::from_str::<serde_json::Value>(payload)?
