@@ -7,7 +7,7 @@ pub enum CastMessagePayload {
 }
 
 /// Messages that are exchanged between Receiver and Sender.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct CastMessage {
     /// A namespace is a labeled protocol. That is, messages that are exchanged throughout the
     /// Cast ecosystem utilize namespaces to identify the protocol of the message being sent.

@@ -1,4 +1,4 @@
-use crate::types::{MessageType, MessageTypeConst, Namespace, NamespaceConst, RequestId};
+use crate::types::{MessageType, MessageTypeConst, /* Namespace, */ NamespaceConst, RequestId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -27,6 +27,48 @@ pub trait ResponseInner: Debug + DeserializeOwned
 {
     const CHANNEL_NAMESPACE: NamespaceConst;
     const TYPE_NAME: MessageTypeConst;
+}
+
+pub mod connection {
+    use super::*;
+
+    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.connection";
+
+    const MESSAGE_TYPE_CONNECT: MessageTypeConst = "CONNECT";
+    const MESSAGE_TYPE_CLOSE: MessageTypeConst = "CLOSE";
+}
+
+pub mod media {
+    use super::*;
+
+    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.media";
+
+    const MESSAGE_TYPE_GET_STATUS: MessageTypeConst = "GET_STATUS";
+    const MESSAGE_TYPE_LOAD: MessageTypeConst = "LOAD";
+    const MESSAGE_TYPE_PLAY: MessageTypeConst = "PLAY";
+    const MESSAGE_TYPE_PAUSE: MessageTypeConst = "PAUSE";
+    const MESSAGE_TYPE_STOP: MessageTypeConst = "STOP";
+    const MESSAGE_TYPE_SEEK: MessageTypeConst = "SEEK";
+    const MESSAGE_TYPE_QUEUE_REMOVE: MessageTypeConst = "QUEUE_REMOVE";
+    const MESSAGE_TYPE_QUEUE_INSERT: MessageTypeConst = "QUEUE_INSERT";
+    const MESSAGE_TYPE_QUEUE_LOAD: MessageTypeConst = "QUEUE_LOAD";
+    const MESSAGE_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
+    const MESSAGE_TYPE_QUEUE_PREV: MessageTypeConst = "QUEUE_PREV";
+    const MESSAGE_TYPE_QUEUE_NEXT: MessageTypeConst = "QUEUE_NEXT";
+    const MESSAGE_TYPE_MEDIA_STATUS: MessageTypeConst = "MEDIA_STATUS";
+    const MESSAGE_TYPE_LOAD_CANCELLED: MessageTypeConst = "LOAD_CANCELLED";
+    const MESSAGE_TYPE_LOAD_FAILED: MessageTypeConst = "LOAD_FAILED";
+    const MESSAGE_TYPE_INVALID_PLAYER_STATE: MessageTypeConst = "INVALID_PLAYER_STATE";
+    const MESSAGE_TYPE_INVALID_REQUEST: MessageTypeConst = "INVALID_REQUEST";
+}
+
+pub mod heartbeat {
+    use super::*;
+
+    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.heartbeat";
+
+    const MESSAGE_TYPE_PING: MessageTypeConst = "PING";
+    const MESSAGE_TYPE_PONG: MessageTypeConst = "PONG";
 }
 
 pub mod receiver {

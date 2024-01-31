@@ -1,20 +1,31 @@
 use anyhow::{bail, format_err};
+use bytes::BytesMut;
 use crate::{
     cast::proxies,
-    ChannelMessage,
     json_payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner},
     message::{
         CastMessage,
         CastMessagePayload,
     },
-    types::{Namespace, RequestId},
+    types::{MessageType, MessageTypeConst, Namespace, NamespaceConst, RequestId},
+    util::named,
 };
+use futures::StreamExt;
+use futures_concurrency::stream::Merge;
+use once_cell::sync::Lazy;
 use std::{
     any::{self, Any},
-    collections::HashMap,
-    sync::{Arc, atomic::{AtomicI32, Ordering}},
+    collections::{HashMap, HashSet},
+    sync::{Arc, atomic::{AtomicI32, AtomicUsize, Ordering}},
 };
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    pin,
+};
+use tokio_util::{
+    codec,
+    time::delay_queue::{DelayQueue, Expired as DelayExpired, Key as DelayKey},
+};
 
 pub use anyhow::Error;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -27,6 +38,7 @@ pub struct Client {
     task_cmd_tx: tokio::sync::mpsc::Sender::<TaskCommand>,
 
     next_request_id: AtomicI32,
+    next_command_id: AtomicUsize,
 }
 
 pub struct Config {
@@ -38,14 +50,25 @@ struct Task<S: TokioAsyncStream> {
     stream: S,
     task_cmd_rx: tokio::sync::mpsc::Receiver::<TaskCommand>,
 
-    requests_map: HashMap<RequestId, RequestState>,
+    requests_map: HashMap<RequestId, Box<RequestState>>,
 }
 
-struct RequestState {}
+struct RequestState {
+    response_ns: NamespaceConst,
+    response_type_name: MessageTypeConst,
+    delay_key: DelayKey,
+    deadline: tokio::time::Instant,
+    result_sender: TaskCommandResultSender,
+}
+
+struct TaskCommandResultSender {
+    command_id: CommandId,
+    result_tx: tokio::sync::oneshot::Sender::<TaskCommandResult>,
+}
 
 struct TaskCommand {
-    result_tx: tokio::sync::oneshot::Sender::<TaskCommandResult>,
     command: TaskCommandType,
+    result_sender: TaskCommandResultSender,
 }
 
 enum TaskCommandType {
@@ -56,6 +79,8 @@ enum TaskCommandType {
 struct CastRpc {
     request_message: CastMessage,
     request_id: RequestId,
+    response_ns: NamespaceConst,
+    response_type_name: MessageTypeConst,
 }
 
 struct TaskResponseBox {
@@ -71,7 +96,26 @@ impl<T> TokioAsyncStream for T
 where T: AsyncRead + AsyncWrite + Unpin
 {}
 
-const TASK_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_000);
+type CommandId = usize;
+
+struct CastMessageCodec;
+
+/// Duration for the Task to do something locally. (Probably a bit high).
+const LOCAL_TASK_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_000);
+
+/// Duration for an RPC request and response to the Chromecast.
+const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(5_000);
+
+const DATA_BUFFER_LEN: usize = 64 * 1024;
+
+static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<NamespaceConst>>::new(|| {
+    HashSet::from([
+        json_payload::connection::CHANNEL_NAMESPACE,
+        json_payload::heartbeat::CHANNEL_NAMESPACE,
+        json_payload::media::CHANNEL_NAMESPACE,
+        json_payload::receiver::CHANNEL_NAMESPACE,
+    ])
+});
 
 impl Config {
     pub async fn connect(self) -> Result<Client> {
@@ -91,6 +135,7 @@ impl Config {
             task_join_handle: Some(task_join_handle),
             task_cmd_tx,
             next_request_id: AtomicI32::new(0),
+            next_command_id: AtomicUsize::new(0),
         };
 
         client.init().await?;
@@ -135,7 +180,7 @@ impl Client {
         let join_fut = self.task_join_handle.take()
                            .expect("task_join_handle is Some(_) until .close().");
 
-        tokio::time::timeout(TASK_COMMAND_TIMEOUT, join_fut).await???;
+        tokio::time::timeout(LOCAL_TASK_COMMAND_TIMEOUT, join_fut).await???;
 
         Ok(())
     }
@@ -143,10 +188,6 @@ impl Client {
 
 /// Internals.
 impl Client {
-    fn take_request_id(&self) -> i32 {
-        self.next_request_id.fetch_add(1, Ordering::SeqCst)
-    }
-
     async fn init(&mut self) -> Result<()> {
         // TODO?
         Ok(())
@@ -156,7 +197,9 @@ impl Client {
     -> Result<Payload<Resp>>
     where Resp: ResponseInner
     {
+        // let expected_namespace = Resp::CHANNEL_NAMESPACE;
         let expected_type = Resp::TYPE_NAME;
+
         if payload_dyn.typ != expected_type {
             bail!("Unexpected payload type\n\
                    request_id: {rid}\n\
@@ -200,6 +243,8 @@ impl Client {
         let cmd_type = TaskCommandType::CastRpc(Box::new(CastRpc {
             request_message,
             request_id,
+            response_ns: Resp::CHANNEL_NAMESPACE,
+            response_type_name: Resp::TYPE_NAME,
         }));
 
         let resp_dyn: Box<PayloadDyn> = self.task_cmd(cmd_type).await?;
@@ -212,18 +257,37 @@ impl Client {
     -> Result<Box<R>>
     where R: Any + Send + Sync
     {
+        let command_id = self.take_command_id();
         let (result_tx, result_rx) = tokio::sync::oneshot::channel::<TaskCommandResult>();
 
         let cmd = TaskCommand {
-            result_tx,
             command: cmd_type,
+            result_sender: TaskCommandResultSender {
+                command_id,
+                result_tx,
+            },
         };
-        self.task_cmd_tx.send_timeout(cmd, TASK_COMMAND_TIMEOUT).await?;
+        let command_timeout: std::time::Duration = match &cmd.command {
+            TaskCommandType::Shutdown => LOCAL_TASK_COMMAND_TIMEOUT,
+            TaskCommandType::CastRpc(_) => RPC_TIMEOUT,
+        };
+
+        self.task_cmd_tx.send_timeout(
+            cmd,
+            LOCAL_TASK_COMMAND_TIMEOUT).await?;
 
         let response: TaskResponseBox =
-            tokio::time::timeout(TASK_COMMAND_TIMEOUT, result_rx).await???;
+            tokio::time::timeout(command_timeout, result_rx).await???;
 
         response.downcast::<R>()
+    }
+
+    fn take_request_id(&self) -> RequestId {
+        self.next_request_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn take_command_id(&self) -> CommandId {
+        self.next_command_id.fetch_add(1, Ordering::SeqCst)
     }
 }
 
@@ -278,10 +342,75 @@ async fn tls_connect(config: &Config)
     Ok(tls_stream)
 }
 
-impl<S: TokioAsyncStream> Task<S> {
-    async fn main(mut self) -> Result<()> {
-        todo("also read stream messages");
+enum TaskEvent {
+    Cmd(TaskCommand),
+    MessageRead(Result<Box<CastMessage>>),
+    RpcTimeout(DelayExpired<RequestId>),
+}
 
+impl<S: TokioAsyncStream> Task<S> {
+    pub fn new(
+        stream: S,
+        task_cmd_rx: tokio::sync::mpsc::Receiver::<TaskCommand>,
+    ) -> Task<S> {
+        Task {
+            stream,
+            task_cmd_rx,
+            requests_map: HashMap::new(),
+        }
+    }
+
+    async fn main(mut self) -> Result<()> {
+        // TODO: Timeouts for requests, send response and clean up.
+
+        // TODO: move these streams into struct Task?
+        let cmd_stream = tokio_stream::wrappers::ReceiverStream::new(self.task_cmd_rx)
+            .map(TaskEvent::Cmd);
+
+        let rpc_timeout_stream = DelayQueue::<RequestId>::with_capacity(4)
+            .map(TaskEvent::RpcTimeout);
+
+        let cast_message_codec = CastMessageCodec;
+        let data_framed = tokio_util::codec::Framed::with_capacity(
+            self.stream, cast_message_codec, DATA_BUFFER_LEN);
+
+        let (data_sink, data_stream) = data_framed.split();
+
+        let data_stream = data_stream.map(TaskEvent::MessageRead);
+
+        pin! {
+            let event_stream /* : impl Stream<Item = TaskEvent> */
+                = (cmd_stream, data_stream, rpc_timeout_stream).merge();
+        }
+
+        while let Some(event) = event_stream.next().await {
+            match event {
+                TaskEvent::Cmd(cmd) => match cmd.command {
+                    TaskCommandType::CastRpc(rpc) => {
+                        self.handle_rpc_cmd(rpc, cmd.result_sender).await;
+                    },
+                    TaskCommandType::Shutdown => {
+                        todo!();
+                    },
+                },
+
+                TaskEvent::MessageRead(read_res) => {
+                    self.handle_msg_read(read_res).await;
+                },
+
+                TaskEvent::RpcTimeout(expired) => {
+                    let deadline = expired.deadline();
+                    let delay_key = expired.key();
+                    let request_id = expired.into_inner();
+                    todo("get state by request_id, assert delay_key\n\
+                          log all\n\
+                          reply to Client");
+                    todo!();
+                }
+            }
+        }
+
+        /*
         while let Some(cmd) = self.task_cmd_rx.recv().await {
             let cmd: TaskCommand = cmd;
 
@@ -304,21 +433,117 @@ impl<S: TokioAsyncStream> Task<S> {
         todo("when new message", || {
             todo("parse, dispatch to request's response oneshot channel");
         });
+         */
 
         Ok(())
+    }
+
+    #[named]
+    async fn handle_rpc_cmd(&mut self, rpc: Box<CastRpc>, result_sender: TaskCommandResultSender)
+    {
+        let deadline = tokio::time::Instant::now()
+            .checked_add(RPC_TIMEOUT)
+            .unwrap_or_else(|| panic!("{function_path}: error calculating deadline",
+                                      function_path = function_path!()));
+
+        let delay_key = delay_queue.insert_at(rpc.request_id, deadline);
+
+        let state = Box::new(RequestState {
+            deadline,
+            delay_key,
+
+            response_ns: rpc.response_ns,
+            response_type_name: rpc.response_type_name,
+            result_sender,
+        });
+        self.requests_map.insert(rpc.request_id, state);
+        if let Err(err) = self.send_raw(&rpc.request_message).await {
+            todo!("log");
+        }
     }
 
     async fn send_raw(&mut self, msg: &CastMessage) -> Result<()> {
         todo!();
     }
 
-    fn respond<R>(&self, cmd: TaskCommand, result: Result<R>)
+    async fn handle_msg_read(&mut self, read_res: Result<Box<CastMessage>>) {
+        let msg = match read_res {
+            Err(err) => {
+                todo!("log error");
+                return;
+            }
+            Ok(msg) => msg,
+        };
+
+        let msg_ns = msg.namespace.as_str();
+        if !JSON_NAMESPACES.contains(msg_ns) {
+            todo!("log");
+            return;
+        }
+        let pd_json_str = match &msg.payload {
+            CastMessagePayload::Binary(b) => {
+                todo!("error");
+                return;
+            },
+            CastMessagePayload::String(s) => s.as_str(),
+        };
+
+        let pd: Box::<PayloadDyn> = match serde_json::from_str(pd_json_str) {
+            Err(err) => {
+                todo!("error");
+                return;
+            }
+            Ok(pd) => pd,
+        };
+
+        let request_id = pd.request_id;
+        let Some(request_state) = self.requests_map.get(&request_id) else {
+            todo!("error");
+            return;
+        };
+
+        todo!("from here, return response to Client via channel");
+
+        if delay_queue.try_remove(request_state.delay_key).is_none() {
+            tracing::warn!(todo);
+        }
+
+        let result =
+            if request_state.response_ns != msg_ns {
+                todo!("error");
+                Err(todo)
+            } else if request_state.response_type_name != pd.typ {
+                todo!("error");
+                Err(todo)
+            } else {
+                Ok(pd)
+            };
+
+        self.respond(request_state.result_sender, result);
+    }
+
+    fn respond<R>(&self, result_sender: TaskCommandResultSender,
+                  result: Result<R>)
     where R: Any + Send + Sync
     {
+        let command_id = result_sender.command_id;
+        let result_ok = result.is_ok();
+        let result_variant = if result_ok { "Ok"  }
+                             else         { "Err" };
+
         let boxed = result.map(|response| TaskResponseBox::new(response));
 
-        if let Err(_) = cmd.result_tx.send(boxed) {
-            tracing::warn!("Task::respond: result channel dropped");
+        match result_sender.result_tx.send(boxed) {
+            Ok(()) =>
+                tracing::trace!(
+                    command_id,
+                    result_variant,
+                    "Task::respond: sent result ok"),
+            Err(err) =>
+                tracing::warn!(
+                    command_id,
+                    result_variant,
+                    "Task::respond: result channel dropped"),
         }
     }
 }
@@ -344,5 +569,33 @@ impl TaskResponseBox {
                                          type:          {ty:?}",
                                         expected = any::type_name::<R>(),
                                         ty       = type_name))
+    }
+}
+
+impl codec::Encoder<Box<CastMessage>> for CastMessageCodec {
+    type Error = Error;
+
+    fn encode(
+        &mut self,
+        msg: Box<CastMessage>,
+        dst: &mut BytesMut
+    ) -> Result<()>
+    {
+        todo!();
+
+        Ok(())
+    }
+}
+
+impl codec::Decoder for CastMessageCodec {
+    type Item = Box<CastMessage>;
+    type Error = Error;
+
+    fn decode(
+        &mut self,
+        src: &mut BytesMut
+    ) -> Result<Option<Box<CastMessage>>>
+    {
+        todo!();
     }
 }

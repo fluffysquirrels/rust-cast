@@ -1,5 +1,8 @@
 // #![deny(warnings)]
 
+#[macro_use]
+mod util;
+
 pub mod async_client;
 mod cast;
 pub mod channels;
@@ -8,7 +11,6 @@ mod json_payload;
 mod message;
 pub mod message_manager;
 mod types;
-mod util;
 mod utils;
 
 // use std::{borrow::Cow, net::TcpStream, sync::Arc};
