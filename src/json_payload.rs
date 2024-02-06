@@ -6,7 +6,7 @@ use std::fmt::Debug;
 #[serde(rename_all = "camelCase")]
 pub struct Payload<T>
 {
-    pub request_id: RequestId,
+    pub request_id: Option<RequestId>,
 
     #[serde(rename = "type")]
     pub typ: MessageType,
@@ -34,7 +34,28 @@ pub mod connection {
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.connection";
 
-    const MESSAGE_TYPE_CONNECT: MessageTypeConst = "CONNECT";
+    pub const USER_AGENT: &str = "RustCast";
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ConnectRequest {
+        pub user_agent: String,
+    }
+
+    impl RequestInner for ConnectRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = "CONNECT";
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ConnectResponse {}
+
+    impl ResponseInner for ConnectResponse {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = "CONNECT";
+    }
+
     const MESSAGE_TYPE_CLOSE: MessageTypeConst = "CLOSE";
 }
 
@@ -82,9 +103,7 @@ pub mod receiver {
 
     impl RequestInner for StatusRequest {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-
-        // pub const TYPE_NAME: MessageTypeConst = "GET_STATUS";
-        const TYPE_NAME: MessageTypeConst = "GET_STATUS_spoiler";
+        const TYPE_NAME: MessageTypeConst = "GET_STATUS";
     }
 
     #[derive(Debug, Deserialize)]
@@ -94,8 +113,6 @@ pub mod receiver {
 
     impl ResponseInner for StatusResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-
-        // pub const TYPE_NAME: MessageTypeConst = "RECEIVER_STATUS";
-        const TYPE_NAME: MessageTypeConst = "RECEIVER_STATUS_spoiler";
+        const TYPE_NAME: MessageTypeConst = "RECEIVER_STATUS";
     }
 }

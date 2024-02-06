@@ -1,14 +1,22 @@
 use chromecast_tokio::{
     async_client::{self as client, /* Error, */ Result},
 };
+use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_logging(/* json: */ false)?;
 
-    let config = client::Config {};
+    // TODO: mdns service discovery
+
+    let config = client::Config {
+        addr: SocketAddr::from(([192, 168, 0, 144], 8009)),
+    };
     let mut client = config.connect().await?;
-    let _status = client.receiver_status().await?;
+    let status = client.receiver_status().await?;
+
+    println!("status = {status:#?}");
+
     client.close().await?;
     Ok(())
 }

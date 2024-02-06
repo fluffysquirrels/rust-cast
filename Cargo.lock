@@ -141,6 +141,7 @@ dependencies = [
  "futures-concurrency",
  "log",
  "once_cell",
+ "pin-project-lite",
  "protobuf",
  "protobuf-codegen",
  "rustls",

@@ -1,6 +1,7 @@
 use crate::types::{AppId, Namespace};
+use std::fmt::Debug;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum CastMessagePayload {
     String(String),
     Binary(Vec<u8>),
@@ -32,5 +33,24 @@ impl From<String> for CastMessagePayload {
 impl From<Vec<u8>> for CastMessagePayload {
     fn from(b: Vec<u8>) -> CastMessagePayload {
         Self::Binary(b)
+    }
+}
+
+impl Debug for CastMessagePayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            CastMessagePayload::String(s) => {
+                f.debug_struct("CastMessagePayload::String")
+                 .field("len", &s.len())
+                 .finish_non_exhaustive()?;
+            },
+            CastMessagePayload::Binary(v) => {
+                f.debug_struct("CastMessagePayload::Binary")
+                 .field("len", &v.len())
+                 .finish_non_exhaustive()?;
+            },
+        }
+
+        Ok(())
     }
 }

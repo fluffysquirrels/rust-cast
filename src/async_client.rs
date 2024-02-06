@@ -1,5 +1,5 @@
 use anyhow::{bail, format_err};
-use bytes::BytesMut;
+use bytes::{Buf, BufMut, BytesMut};
 use crate::{
     cast::proxies,
     json_payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner},
@@ -7,15 +7,22 @@ use crate::{
         CastMessage,
         CastMessagePayload,
     },
-    types::{MessageType, MessageTypeConst, Namespace, NamespaceConst, RequestId},
+    types::{AppId, MessageType, MessageTypeConst, Namespace, NamespaceConst, RequestId},
     util::named,
 };
-use futures::StreamExt;
-use futures_concurrency::stream::Merge;
+use futures::{
+    future::Either, SinkExt, StreamExt,
+    stream::{SplitSink, SplitStream},
+};
 use once_cell::sync::Lazy;
+use pin_project_lite::pin_project;
+use protobuf::Message;
 use std::{
     any::{self, Any},
     collections::{HashMap, HashSet},
+    fmt::Debug,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::{Arc, atomic::{AtomicI32, AtomicUsize, Ordering}},
 };
 use tokio::{
@@ -23,7 +30,7 @@ use tokio::{
     pin,
 };
 use tokio_util::{
-    codec,
+    codec::{self, Framed},
     time::delay_queue::{DelayQueue, Expired as DelayExpired, Key as DelayKey},
 };
 
@@ -42,40 +49,63 @@ pub struct Client {
 }
 
 pub struct Config {
-    // pub _host: String,
-    // pub _port: u16,
+    pub addr: SocketAddr,
 }
 
-struct Task<S: TokioAsyncStream> {
-    stream: S,
-    task_cmd_rx: tokio::sync::mpsc::Receiver::<TaskCommand>,
+pin_project! {
+    struct Task<S: TokioAsyncStream> {
+        // #[pin]
+        // conn_framed: tokio_util::codec::Framed<S, CastMessageCodec>,
 
-    requests_map: HashMap<RequestId, Box<RequestState>>,
+        #[pin]
+        conn_framed_sink: SplitSink<Framed<S, CastMessageCodec>, CastMessage>,
+
+        #[pin]
+        conn_framed_stream: SplitStream<Framed<S, CastMessageCodec>>,
+
+        #[pin]
+        task_cmd_rx: tokio_stream::wrappers::ReceiverStream::<TaskCommand>,
+
+        #[pin]
+        timeout_queue: DelayQueue<RequestId>,
+
+        need_flush: bool,
+        requests_map: HashMap<RequestId, RequestState>,
+    }
 }
 
+#[derive(Debug)]
 struct RequestState {
     response_ns: NamespaceConst,
     response_type_name: MessageTypeConst,
     delay_key: DelayKey,
+
+    #[allow(dead_code)] // Just for debugging for now.
     deadline: tokio::time::Instant,
+
     result_sender: TaskCommandResultSender,
 }
 
+#[derive(Debug)]
 struct TaskCommandResultSender {
     command_id: CommandId,
     result_tx: tokio::sync::oneshot::Sender::<TaskCommandResult>,
 }
 
+#[derive(Debug)]
 struct TaskCommand {
     command: TaskCommandType,
     result_sender: TaskCommandResultSender,
 }
 
+#[derive(Debug)]
 enum TaskCommandType {
     CastRpc(Box<CastRpc>),
+    CastSend(Box<CastSend>),
     Shutdown,
 }
 
+#[derive(Debug)]
 struct CastRpc {
     request_message: CastMessage,
     request_id: RequestId,
@@ -83,6 +113,13 @@ struct CastRpc {
     response_type_name: MessageTypeConst,
 }
 
+#[derive(Debug)]
+struct CastSend {
+    request_message: CastMessage,
+    request_id: RequestId,
+}
+
+#[derive(Debug)]
 struct TaskResponseBox {
     type_name: &'static str,
     value: Box<dyn Any + Send + Sync>,
@@ -117,17 +154,15 @@ static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<Namespace
     ])
 });
 
+use crate::{DEFAULT_RECEIVER_ID, DEFAULT_SENDER_ID};
+
 impl Config {
     pub async fn connect(self) -> Result<Client> {
-        let stream = tls_connect(&self).await?;
+        let conn = tls_connect(&self).await?;
 
         let (task_cmd_tx, task_cmd_rx) = tokio::sync::mpsc::channel(/* buffer: */ 32);
 
-        let task = Task {
-            stream,
-            task_cmd_rx,
-            requests_map: HashMap::new(),
-        };
+        let task = Task::new(conn, task_cmd_rx);
 
         let task_join_handle = tokio::spawn(task.main());
 
@@ -146,30 +181,10 @@ impl Config {
 
 impl Client {
     pub async fn receiver_status(&mut self) -> Result<proxies::receiver::Status> {
-/*
-        let request_id = self.take_request_id();
-        let payload = serde_json::to_string(&crate::cast::proxies::receiver::GetStatusRequest {
-            typ: crate::channels::receiver::MESSAGE_TYPE_GET_STATUS.to_string(),
-            request_id,
-        })?;
-
-        let source = crate::DEFAULT_SENDER_ID.to_string();
-        let destination = crate::DEFAULT_RECEIVER_ID.to_string();
-
-        let msg = RawMessage {
-            namespace: crate::channels::receiver::CHANNEL_NAMESPACE.to_string(),
-            source, destination,
-            payload: RawMessagePayload::String(payload),
-        };
-
-        let raw_response = self.rpc(request_id, msg).await?;
-        let response = crate::channels::receiver::ReceiverChannel::parse_static(&raw_response)?;
-*/
-
         let payload_req = json_payload::receiver::StatusRequest {};
 
         let resp: Payload<json_payload::receiver::StatusResponse>
-            = self.json_rpc(payload_req).await?;
+            = self.json_rpc(payload_req, DEFAULT_RECEIVER_ID.to_string()).await?;
 
         Ok(resp.inner.status)
     }
@@ -189,7 +204,16 @@ impl Client {
 /// Internals.
 impl Client {
     async fn init(&mut self) -> Result<()> {
-        // TODO?
+        self.connection_connect(DEFAULT_RECEIVER_ID.to_string()).await?;
+
+        Ok(())
+    }
+
+    async fn connection_connect(&mut self, receiver: AppId) -> Result<()> {
+        let payload_req = json_payload::connection::ConnectRequest {
+            user_agent: json_payload::connection::USER_AGENT.to_string(),
+        };
+        self.json_send(payload_req, receiver).await?;
         Ok(())
     }
 
@@ -202,7 +226,7 @@ impl Client {
 
         if payload_dyn.typ != expected_type {
             bail!("Unexpected payload type\n\
-                   request_id: {rid}\n\
+                   request_id:    {rid:?}\n\
                    expected_type: {expected_type:?}\n\
                    type:          {typ:?}",
                   rid = payload_dyn.request_id,
@@ -216,29 +240,28 @@ impl Client {
         })
     }
 
-    async fn json_rpc<Req, Resp>(&mut self, req: Req)
+    async fn json_send<Req>(&mut self, req: Req, destination: AppId)
+    -> Result<()>
+    where Req: RequestInner
+    {
+        let (request_message, request_id) = self.cast_request_from_inner(req, destination)?;
+
+        let cmd_type = TaskCommandType::CastSend(Box::new(CastSend {
+            request_message,
+            request_id,
+        }));
+
+        let _resp: Box<()> = self.task_cmd(cmd_type).await?;
+
+        Ok(())
+    }
+
+    async fn json_rpc<Req, Resp>(&mut self, req: Req, destination: AppId)
     -> Result<Payload<Resp>>
     where Req: RequestInner,
           Resp: ResponseInner
     {
-        let request_id = self.take_request_id();
-        let payload = Payload::<Req> {
-            request_id,
-            typ: Req::TYPE_NAME.to_string(),
-            inner: req,
-        };
-
-        let payload_json = serde_json::to_string(&payload)?;
-
-        let source = crate::DEFAULT_SENDER_ID.to_string();
-        let destination = crate::DEFAULT_RECEIVER_ID.to_string();
-
-        let request_message = CastMessage {
-            namespace: Req::CHANNEL_NAMESPACE.to_string(),
-            source,
-            destination,
-            payload: payload_json.into(),
-        };
+        let (request_message, request_id) = self.cast_request_from_inner(req, destination)?;
 
         let cmd_type = TaskCommandType::CastRpc(Box::new(CastRpc {
             request_message,
@@ -251,6 +274,43 @@ impl Client {
         let resp: Payload<Resp> = self.response_from_dyn(resp_dyn)?;
 
         Ok(resp)
+    }
+
+    #[named]
+    fn cast_request_from_inner<Req>(&self, req: Req, destination: AppId)
+    -> Result<(CastMessage, RequestId)>
+    where Req: RequestInner
+    {
+        let request_id = self.take_request_id();
+        let payload = Payload::<Req> {
+            request_id: Some(request_id),
+            typ: Req::TYPE_NAME.to_string(),
+            inner: req,
+        };
+
+        let payload_json = serde_json::to_string(&payload)?;
+
+        // TODO: Take these as params or config.
+        let source = DEFAULT_SENDER_ID.to_string();
+
+        let namespace = Req::CHANNEL_NAMESPACE.to_string();
+
+        tracing::trace!(target: function_path!(),
+                        payload_json,
+                        request_id,
+                        request_type = payload.typ,
+                        request_namespace = namespace,
+                        source, destination,
+                        "json payload");
+
+        let request_message = CastMessage {
+            namespace: Req::CHANNEL_NAMESPACE.to_string(),
+            source,
+            destination,
+            payload: payload_json.into(),
+        };
+
+        Ok((request_message, request_id))
     }
 
     async fn task_cmd<R>(&mut self, cmd_type: TaskCommandType)
@@ -268,8 +328,9 @@ impl Client {
             },
         };
         let command_timeout: std::time::Duration = match &cmd.command {
-            TaskCommandType::Shutdown => LOCAL_TASK_COMMAND_TIMEOUT,
             TaskCommandType::CastRpc(_) => RPC_TIMEOUT,
+            TaskCommandType::CastSend(_) => RPC_TIMEOUT,
+            TaskCommandType::Shutdown => LOCAL_TASK_COMMAND_TIMEOUT,
         };
 
         self.task_cmd_tx.send_timeout(
@@ -300,12 +361,15 @@ impl Drop for Client {
     }
 }
 
+#[named]
 async fn tls_connect(config: &Config)
 -> Result<impl TokioAsyncStream>
 {
-    // TODO: mdns service discovery
-    let ip = std::net::IpAddr::from([192, 168, 0, 144]);
-    let port = 8009_u16;
+    const FUNCTION_PATH: &str = function_path!();
+
+    let addr = &config.addr;
+    let ip: IpAddr = addr.ip();
+    let port: u16 = addr.port();
 
     let mut config = rustls::ClientConfig::builder()
         .dangerous().with_custom_certificate_verifier(Arc::new(
@@ -320,211 +384,419 @@ async fn tls_connect(config: &Config)
     let ip_rustls = rustls::pki_types::IpAddr::from(ip);
     let domain = rustls::pki_types::ServerName::IpAddress(ip_rustls);
 
-    tracing::debug!(
-        %ip, port,
-        "Connecting to cast device...",
-    );
+    let _conn_span = tracing::info_span!(
+        target: FUNCTION_PATH,
+        "Connecting to cast device",
+        %addr, %ip, port,
+    ).entered();
 
-    let tcp_stream = tokio::net::TcpStream::connect((ip, port)).await?;
+    let tcp_stream = tokio::net::TcpStream::connect(addr).await?;
 
-    tracing::debug!(
-        %ip, port,
-        "TcpStream connected",
-    );
+    tracing::debug!(target: FUNCTION_PATH,
+                    "TcpStream connected");
 
     let tls_stream = connector.connect(domain, tcp_stream).await?;
 
-    tracing::debug!(
-        %ip, port,
-        "TlsStream connected to cast device",
-    );
+    tracing::debug!(target: FUNCTION_PATH,
+                    "TlsStream connected");
 
     Ok(tls_stream)
 }
 
+#[derive(Debug)]
 enum TaskEvent {
     Cmd(TaskCommand),
-    MessageRead(Result<Box<CastMessage>>),
+    Flush(Result<()>),
+    MessageRead(Result<CastMessage>),
     RpcTimeout(DelayExpired<RequestId>),
 }
 
 impl<S: TokioAsyncStream> Task<S> {
     pub fn new(
-        stream: S,
+        conn: S,
         task_cmd_rx: tokio::sync::mpsc::Receiver::<TaskCommand>,
     ) -> Task<S> {
+        let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx)
+//            .map(TaskEvent::Cmd)
+            ;
+
+        let timeout_queue = DelayQueue::<RequestId>::with_capacity(4)
+//            .map(TaskEvent::RpcTimeout)
+            ;
+
+        let cast_message_codec = CastMessageCodec;
+        let conn_framed = tokio_util::codec::Framed::with_capacity(
+            conn, cast_message_codec, DATA_BUFFER_LEN);
+
+        let (conn_framed_sink, conn_framed_stream) = conn_framed.split();
+
         Task {
-            stream,
+            //conn_framed,
+
+            conn_framed_sink,
+            conn_framed_stream,
+
             task_cmd_rx,
+            timeout_queue,
+
+            need_flush: false,
             requests_map: HashMap::new(),
         }
     }
 
-    async fn main(mut self) -> Result<()> {
+    #[named]
+    async fn main(self) -> Result<()> {
         // TODO: Timeouts for requests, send response and clean up.
 
-        // TODO: move these streams into struct Task?
-        let cmd_stream = tokio_stream::wrappers::ReceiverStream::new(self.task_cmd_rx)
-            .map(TaskEvent::Cmd);
-
-        let rpc_timeout_stream = DelayQueue::<RequestId>::with_capacity(4)
-            .map(TaskEvent::RpcTimeout);
-
-        let cast_message_codec = CastMessageCodec;
-        let data_framed = tokio_util::codec::Framed::with_capacity(
-            self.stream, cast_message_codec, DATA_BUFFER_LEN);
-
-        let (data_sink, data_stream) = data_framed.split();
-
-        let data_stream = data_stream.map(TaskEvent::MessageRead);
+        const FUNCTION_PATH: &str = function_path!();
 
         pin! {
-            let event_stream /* : impl Stream<Item = TaskEvent> */
-                = (cmd_stream, data_stream, rpc_timeout_stream).merge();
+            let this = self;
         }
 
-        while let Some(event) = event_stream.next().await {
+        while let Some(event) = this.as_mut().take_next_event().await {
+            tracing::trace!(target: FUNCTION_PATH,
+                            ?event,
+                            "event");
+
             match event {
                 TaskEvent::Cmd(cmd) => match cmd.command {
                     TaskCommandType::CastRpc(rpc) => {
-                        self.handle_rpc_cmd(rpc, cmd.result_sender).await;
+                        this.as_mut().handle_rpc_cmd(rpc, cmd.result_sender).await;
                     },
+
+                    TaskCommandType::CastSend(send) => {
+                        this.as_mut().handle_send(send, cmd.result_sender).await;
+                    },
+
                     TaskCommandType::Shutdown => {
-                        todo!();
+                        tracing::info!(target: FUNCTION_PATH,
+                                       "shutdown on command");
+                        Self::respond_generic(cmd.result_sender, Ok(()));
+                        return Ok(());
                     },
                 },
 
                 TaskEvent::MessageRead(read_res) => {
-                    self.handle_msg_read(read_res).await;
+                    this.as_mut().handle_msg_read(read_res).await;
                 },
 
                 TaskEvent::RpcTimeout(expired) => {
-                    let deadline = expired.deadline();
-                    let delay_key = expired.key();
-                    let request_id = expired.into_inner();
-                    todo("get state by request_id, assert delay_key\n\
-                          log all\n\
-                          reply to Client");
-                    todo!();
+                    this.as_mut().handle_rpc_timeout(expired);
                 }
-            }
-        }
 
-        /*
-        while let Some(cmd) = self.task_cmd_rx.recv().await {
-            let cmd: TaskCommand = cmd;
-
-            match cmd.command {
-                TaskCommandType::Shutdown => {
-                    self.respond(cmd, Ok(()));
-                    break;
-                },
-
-                TaskCommandType::CastRpc(rpc) => {
-                    let state = RequestState {};
-                    self.requests_map.insert(rpc.request_id, state);
-                    if let Err(err) = self.send_raw(&rpc.request_message).await {
-                        todo();
+                TaskEvent::Flush(res) => {
+                    if let Err(err) = res {
+                        // TODO: Mark connection as dead on reconnect.
+                        tracing::warn!(target: FUNCTION_PATH,
+                                       ?err,
+                                       "flush error");
                     }
+                    this.need_flush = false;
                 }
             }
         }
 
-        todo("when new message", || {
-            todo("parse, dispatch to request's response oneshot channel");
-        });
-         */
+        tracing::info!(target: FUNCTION_PATH,
+                       "shutdown on event stream closed");
+
+        // TODO: cleanup? e.g. flush outputs, reset connections,
+        // return errors to response channels?;
+
+        Ok(())
+    }
+
+    async fn take_next_event(self: Pin<&mut Self>) -> Option<TaskEvent> {
+        let mut proj = self.project();
+
+        let conn_flush_stream = if *proj.need_flush {
+            let fut = proj.conn_framed_sink.flush();
+            let stream = futures::stream::once(fut);
+            Either::Left(stream)
+        } else {
+            Either::Right(futures::stream::empty())
+        };
+
+        // poll_fn???
+
+        // Tried in order.
+        let streams = (
+            &mut (conn_flush_stream.map(TaskEvent::Flush)),
+            &mut (proj.task_cmd_rx.map(TaskEvent::Cmd)),
+            &mut (proj.timeout_queue.map(TaskEvent::RpcTimeout)),
+            &mut (proj.conn_framed_stream.map(TaskEvent::MessageRead)),
+        );
+
+        let mut merged = futures_concurrency::stream::Merge::merge(streams);
+
+        merged.next().await
+    }
+
+    #[named]
+    async fn handle_send(mut self: Pin<&mut Self>,
+                            send: Box<CastSend>, result_sender: TaskCommandResultSender)
+    {
+        const FUNCTION_PATH: &str = function_path!();
+
+        let deadline = tokio::time::Instant::now()
+            .checked_add(RPC_TIMEOUT)
+            .unwrap_or_else(|| panic!("{FUNCTION_PATH}: error calculating deadline"));
+
+        let send_debug = format!("{send:#?}");
+
+        let CastSend {
+            request_message,
+            request_id,
+        } = *send;
+
+        let command_id = &result_sender.command_id;
+
+        tracing::debug!(target: FUNCTION_PATH,
+                        ?deadline,
+                        request_id,
+                        command_id,
+                        ?request_message,
+                        "msg send");
+
+        if let Err(err) = self.as_mut().send_raw(request_message, deadline).await {
+            tracing::warn!(target: FUNCTION_PATH,
+                           ?err,
+                           send = send_debug,
+                           request_id,
+                           command_id,
+                           "send_raw error");
+
+            Self::respond_send(result_sender, Err(err));
+            return;
+        }
+
+        Self::respond_send(result_sender, Ok(()));
+    }
+
+    #[named]
+    async fn handle_rpc_cmd(mut self: Pin<&mut Self>,
+                            rpc: Box<CastRpc>, result_sender: TaskCommandResultSender)
+    {
+        const FUNCTION_PATH: &str = function_path!();
+
+        let deadline = tokio::time::Instant::now()
+            .checked_add(RPC_TIMEOUT)
+            .unwrap_or_else(|| panic!("{FUNCTION_PATH}: error calculating deadline"));
+
+        let rpc_debug = format!("{rpc:#?}");
+
+        let CastRpc {
+            request_message,
+            request_id,
+            response_ns,
+            response_type_name,
+        } = *rpc;
+
+        let command_id = &result_sender.command_id;
+
+        tracing::debug!(target: FUNCTION_PATH,
+                        ?deadline,
+                        request_id,
+                        command_id,
+                        ?request_message,
+                        response_ns,
+                        response_type_name,
+                        "rpc send");
+
+        if let Err(err) = self.as_mut().send_raw(request_message, deadline).await {
+            tracing::warn!(target: FUNCTION_PATH,
+                           ?err,
+                           rpc = rpc_debug,
+                           request_id,
+                           command_id,
+                           response_ns,
+                           response_type_name,
+                           "send_raw error");
+
+            Self::respond_rpc(result_sender, Err(err));
+            return;
+        }
+
+        // # Record request state and set timeout.
+        let delay_key = self.as_mut().project()
+                            .timeout_queue.insert_at(request_id, deadline);
+
+        let state = RequestState {
+            deadline,
+            delay_key,
+
+            response_ns,
+            response_type_name,
+            result_sender,
+        };
+
+        self.as_mut().requests_map.insert(request_id, state);
+    }
+
+    async fn send_raw(self: Pin<&mut Self>, msg: CastMessage, deadline: tokio::time::Instant
+    ) -> Result<()> {
+        let mut proj = self.project();
+
+        *proj.need_flush = true;
+
+        // TODO: Don't block the main task when conn sink buffer is full.
+        let fut = proj.conn_framed_sink.feed(msg);
+        tokio::time::timeout_at(deadline, fut).await??;
 
         Ok(())
     }
 
     #[named]
-    async fn handle_rpc_cmd(&mut self, rpc: Box<CastRpc>, result_sender: TaskCommandResultSender)
-    {
-        let deadline = tokio::time::Instant::now()
-            .checked_add(RPC_TIMEOUT)
-            .unwrap_or_else(|| panic!("{function_path}: error calculating deadline",
-                                      function_path = function_path!()));
+    async fn handle_msg_read(mut self: Pin<&mut Self>, read_res: Result<CastMessage>) {
+        const FUNCTION_PATH: &str = function_path!();
 
-        let delay_key = delay_queue.insert_at(rpc.request_id, deadline);
-
-        let state = Box::new(RequestState {
-            deadline,
-            delay_key,
-
-            response_ns: rpc.response_ns,
-            response_type_name: rpc.response_type_name,
-            result_sender,
-        });
-        self.requests_map.insert(rpc.request_id, state);
-        if let Err(err) = self.send_raw(&rpc.request_message).await {
-            todo!("log");
-        }
-    }
-
-    async fn send_raw(&mut self, msg: &CastMessage) -> Result<()> {
-        todo!();
-    }
-
-    async fn handle_msg_read(&mut self, read_res: Result<Box<CastMessage>>) {
         let msg = match read_res {
             Err(err) => {
-                todo!("log error");
+                tracing::warn!(target: FUNCTION_PATH,
+                               ?err,
+                               "Message read error");
                 return;
             }
             Ok(msg) => msg,
         };
 
+        tracing::trace!(target: FUNCTION_PATH,
+                        ?msg,
+                        "message read");
+
         let msg_ns = msg.namespace.as_str();
         if !JSON_NAMESPACES.contains(msg_ns) {
-            todo!("log");
+            tracing::warn!(target: FUNCTION_PATH,
+                           msg_ns,
+                           ?msg,
+                           "message namespace not known");
             return;
         }
         let pd_json_str = match &msg.payload {
-            CastMessagePayload::Binary(b) => {
-                todo!("error");
+            CastMessagePayload::Binary(_b) => {
+                tracing::warn!(target: FUNCTION_PATH,
+                               msg_ns,
+                               ?msg,
+                               "binary message not known");
                 return;
             },
             CastMessagePayload::String(s) => s.as_str(),
         };
 
-        let pd: Box::<PayloadDyn> = match serde_json::from_str(pd_json_str) {
+        tracing::trace!(target: FUNCTION_PATH,
+                        pd_json_str,
+                        "message payload json");
+
+        let pd: PayloadDyn = match serde_json::from_str(pd_json_str) {
             Err(err) => {
-                todo!("error");
+                tracing::warn!(target: FUNCTION_PATH,
+                               ?err, ?msg,
+                               "error deserializing json");
                 return;
-            }
+            },
             Ok(pd) => pd,
         };
 
-        let request_id = pd.request_id;
-        let Some(request_state) = self.requests_map.get(&request_id) else {
-            todo!("error");
+        tracing::trace!(target: FUNCTION_PATH,
+                        ?pd,
+                        "message payload");
+
+        let mut proj = self.as_mut().project();
+
+        let Some(request_id) = pd.request_id else {
+            tracing::warn!(target: FUNCTION_PATH,
+                           ?msg,
+                           "missing request_id in cast message payload");
             return;
         };
 
-        todo!("from here, return response to Client via channel");
+        let Some(request_state) = proj.requests_map.remove(&request_id) else {
+            tracing::warn!(target: FUNCTION_PATH,
+                           request_id, ?msg,
+                           "missing request state");
+            return;
+        };
 
-        if delay_queue.try_remove(request_state.delay_key).is_none() {
-            tracing::warn!(todo);
+        if proj.timeout_queue.as_mut().try_remove(&request_state.delay_key).is_none() {
+            tracing::warn!(target: FUNCTION_PATH,
+                           ?request_state,
+                           ?msg,
+                           "timeout_queue missing expected delay key");
         }
 
-        let result =
+        let result: Result<PayloadDyn> =
             if request_state.response_ns != msg_ns {
-                todo!("error");
-                Err(todo)
+                Err(format_err!(
+                    "{FUNCTION_PATH}: received reply message with unexpected namespace:\n\
+                     _ request_id    = {request_id}\n\
+                     _ expected_ns   = {expected_ns:?}\n\
+                     _ msg_ns        = {msg_ns:?}\n\
+                     _ request_state = {request_state:#?}",
+                    expected_ns = request_state.response_ns))
             } else if request_state.response_type_name != pd.typ {
-                todo!("error");
-                Err(todo)
+                Err(format_err!(
+                    "{FUNCTION_PATH}: received reply message with unexpected type:\n\
+                     _ request_id    = {request_id}\n\
+                     _ expected_type = {expected_type:?}\n\
+                     _ msg_type      = {pd_type:?}\n\
+                     _ request_state = {request_state:#?}",
+                    expected_type = request_state.response_type_name,
+                    pd_type = pd.typ))
             } else {
                 Ok(pd)
             };
 
-        self.respond(request_state.result_sender, result);
+        Self::respond_rpc(request_state.result_sender, result);
     }
 
-    fn respond<R>(&self, result_sender: TaskCommandResultSender,
-                  result: Result<R>)
-    where R: Any + Send + Sync
+    #[named]
+    fn handle_rpc_timeout(mut self: Pin<&mut Self>, expired: DelayExpired<RequestId>) {
+        const FUNCTION_PATH: &str = function_path!();
+
+        let deadline = expired.deadline();
+        let delay_key = expired.key();
+        let request_id = expired.get_ref();
+
+        let proj = self.as_mut().project();
+
+        let Some(request_state) = proj.requests_map.remove(request_id) else {
+            panic!("{FUNCTION_PATH}: missing request_state in requests_map\n\
+                    request_id: {request_id}");
+        };
+
+        assert_eq!(delay_key, request_state.delay_key);
+
+        tracing::warn!(target: FUNCTION_PATH,
+                       ?expired,
+                       ?deadline,
+                       request_id,
+                       ?request_state,
+                       "rpc timeout");
+
+        let err = format_err!("{FUNCTION_PATH}: RPC timeout\n\
+                               _ request_id:    {request_id}\n\
+                               _ deadline:      {deadline:?}\n\
+                               _ expired:       {expired:#?}\n\
+                               _ request_state: {request_state:#?}");
+        Self::respond_rpc(request_state.result_sender,
+                          Err(err));
+    }
+
+    fn respond_rpc(result_sender: TaskCommandResultSender,
+                   result: Result<PayloadDyn>)
+    {
+        Self::respond_generic(result_sender, result);
+    }
+
+    fn respond_send(result_sender: TaskCommandResultSender,
+                    result: Result<()>)
+    {
+        Self::respond_generic(result_sender, result);
+    }
+
+    fn respond_generic<R>(result_sender: TaskCommandResultSender,
+                          result: Result<R>)
+    where R: Any + Debug + Send + Sync
     {
         let command_id = result_sender.command_id;
         let result_ok = result.is_ok();
@@ -539,10 +811,11 @@ impl<S: TokioAsyncStream> Task<S> {
                     command_id,
                     result_variant,
                     "Task::respond: sent result ok"),
-            Err(err) =>
+            Err(unsent) =>
                 tracing::warn!(
                     command_id,
                     result_variant,
+                    ?unsent,
                     "Task::respond: result channel dropped"),
         }
     }
@@ -564,38 +837,123 @@ impl TaskResponseBox {
         let TaskResponseBox { type_name, value } = self;
 
         value.downcast::<R>()
-             .map_err(|err| format_err!("Command response type didn't match expected\n\
-                                         expected type: {expected:?}\n\
-                                         type:          {ty:?}",
-                                        expected = any::type_name::<R>(),
-                                        ty       = type_name))
+             .map_err(|_as_any| format_err!("Command response type didn't match expected\n\
+                                            expected type: {expected:?}\n\
+                                            type:          {ty:?}",
+                                            expected = any::type_name::<R>(),
+                                            ty       = type_name))
     }
 }
 
-impl codec::Encoder<Box<CastMessage>> for CastMessageCodec {
+const SIZE_OF_U32: usize = 4;
+
+// TODO: Box message?
+impl codec::Encoder<CastMessage> for CastMessageCodec {
     type Error = Error;
 
     fn encode(
         &mut self,
-        msg: Box<CastMessage>,
+        msg: CastMessage,
         dst: &mut BytesMut
     ) -> Result<()>
     {
-        todo!();
+        use crate::cast::cast_channel::cast_message::{PayloadType, ProtocolVersion};
+
+        let mut proto_msg = crate::cast::cast_channel::CastMessage::new();
+
+        proto_msg.set_protocol_version(ProtocolVersion::CASTV2_1_0);
+
+        proto_msg.set_namespace(msg.namespace);
+        proto_msg.set_source_id(msg.source);
+        proto_msg.set_destination_id(msg.destination);
+
+        match msg.payload {
+            CastMessagePayload::String(s) => {
+                proto_msg.set_payload_type(PayloadType::STRING);
+                proto_msg.set_payload_utf8(s);
+            },
+
+            CastMessagePayload::Binary(b) => {
+                proto_msg.set_payload_type(PayloadType::BINARY);
+                proto_msg.set_payload_binary(b);
+            },
+        };
+
+        let proto_len: usize = proto_msg.compute_size().try_into()?;
+        let proto_len_u32: u32 = proto_len.try_into()?;
+
+        let total_len: usize = proto_len + SIZE_OF_U32;
+
+        dst.clear();
+        dst.reserve(total_len);
+
+        // Uses big endian
+        dst.put_u32(proto_len_u32);
+
+        // Braces to limit the scope of writer.
+        {
+            let mut writer = dst.limit(proto_len as usize)
+                                .writer();
+            proto_msg.write_to_writer(&mut writer)?;
+        }
+
+        assert_eq!(dst.len(), total_len);
 
         Ok(())
     }
 }
 
 impl codec::Decoder for CastMessageCodec {
-    type Item = Box<CastMessage>;
+    type Item = CastMessage;
     type Error = Error;
 
     fn decode(
         &mut self,
         src: &mut BytesMut
-    ) -> Result<Option<Box<CastMessage>>>
+    ) -> Result<Option<CastMessage>>
     {
-        todo!();
+
+        if src.len() < SIZE_OF_U32 {
+            return Ok(None);
+        }
+
+        let proto_len_bytes = <[u8; SIZE_OF_U32]>::try_from(&src[0..SIZE_OF_U32]).unwrap();
+        let proto_len_u32: u32 = u32::from_be_bytes(proto_len_bytes);
+        let proto_len = usize::try_from(proto_len_u32)?;
+
+        let total_len: usize = proto_len + SIZE_OF_U32;
+
+        let src_len = src.len();
+
+        if src_len < total_len {
+            src.reserve(total_len - src_len);
+            return Ok(None);
+        }
+
+        let mut proto_msg: crate::cast::cast_channel::CastMessage = {
+            // Braces to scope proto_bytes' borrow.
+            let proto_bytes = &src[SIZE_OF_U32..total_len];
+            assert_eq!(proto_bytes.len(), proto_len);
+
+            crate::cast::cast_channel::CastMessage::parse_from_bytes(proto_bytes)?
+        };
+
+        src.advance(total_len);
+
+        use crate::cast::cast_channel::cast_message::PayloadType;
+
+        let msg = CastMessage {
+            namespace: proto_msg.take_namespace(),
+            source: proto_msg.take_source_id(),
+            destination: proto_msg.take_destination_id(),
+            payload: match proto_msg.payload_type() {
+                PayloadType::STRING =>
+                    CastMessagePayload::String(proto_msg.take_payload_utf8()),
+                PayloadType::BINARY =>
+                    CastMessagePayload::Binary(proto_msg.take_payload_binary()),
+            },
+        };
+
+        Ok(Some(msg))
     }
 }
