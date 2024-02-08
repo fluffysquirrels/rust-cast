@@ -1,5 +1,6 @@
 #[macro_use]
-pub mod named;
-pub use named::named;
+#[path = "named.rs"]
+mod named_;
+pub use named_::named;
 
 pub mod rustls;

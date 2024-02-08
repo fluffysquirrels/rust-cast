@@ -2,12 +2,13 @@
 
 #[macro_use]
 mod util;
+pub use util::named;
 
 pub mod async_client;
-mod cast;
+pub mod cast;
 pub mod channels;
 pub mod errors;
-mod json_payload;
+pub mod json_payload;
 mod message;
 pub mod message_manager;
 mod types;

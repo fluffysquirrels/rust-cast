@@ -1,3 +1,4 @@
+use serde_json::json;
 use std::{
     borrow::Cow,
     io::{Read, Write},
@@ -605,7 +606,8 @@ where
             current_time: 0_f64,
             autoplay: true,
             preload_time: 20_f64,
-            custom_data: proxies::media::CustomData { queue: None },
+            // custom_data: proxies::media::CustomData { queue: None },
+            custom_data: proxies::media::CustomData::new(),
         })?;
 
         self.message_manager.send(CastMessage {
@@ -884,7 +886,8 @@ where
                 media,
                 auto_play: true,
                 start_time: 0.0,
-                custom_data: proxies::media::CustomData { queue: Some(true) },
+                // custom_data: proxies::media::CustomData { queue: Some(true) },
+                custom_data: proxies::media::CustomData(json!({ "queue": true })),
             })
             .collect();
 
@@ -936,7 +939,8 @@ where
                 media,
                 auto_play: true,
                 start_time: 0.0,
-                custom_data: proxies::media::CustomData { queue: Some(true) },
+                // custom_data: proxies::media::CustomData { queue: Some(true) },
+                custom_data: proxies::media::CustomData(json!({ "queue": true })),
             })
             .collect();
 

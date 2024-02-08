@@ -1,9 +1,15 @@
 use chromecast_tokio::{
-    async_client::{self as client, /* Error, */ Result},
+//     self as lib,
+    async_client::{self as client, /* Error, */ Result,
+                   LoadMediaArgs},
+    cast::proxies,
+//     function_path, named,
+
 };
 use std::net::SocketAddr;
 
 #[tokio::main]
+// #[named]
 async fn main() -> Result<()> {
     init_logging(/* json: */ false)?;
 
@@ -11,17 +17,56 @@ async fn main() -> Result<()> {
 
     let config = client::Config {
         addr: SocketAddr::from(([192, 168, 0, 144], 8009)),
+        sender: None, // Use default
     };
     let mut client = config.connect().await?;
-    let status = client.receiver_status().await?;
 
+    let status = client.receiver_status().await?;
     println!("status = {status:#?}");
+
+    let (receiver_session, launch_status) =
+        client.media_launch_default(client::DEFAULT_RECEIVER_ID.into()).await?;
+    println!(" # launched:\n\
+              _  receiver_session = {receiver_session:#?}\n\
+              _  status = {launch_status:#?}\n\n");
+
+    let media_url =
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+    let media = LoadMediaArgs {
+        media: proxies::media::Media {
+            content_id: media_url.to_string(),
+            stream_type: "NONE".to_string(), // one of "NONE", "BUFFERED", "LIVE"
+            content_type: "".to_string(),
+            metadata: None,
+            duration: None, // : Option<f32>
+        },
+
+        current_time: 0_f64,
+        autoplay: true,
+        preload_time: None, // Use default.
+    };
+
+    let media_load_res = client.media_load(receiver_session.clone(), media).await?;
+    println!("media_load_res = {media_load_res:#?}");
+
+    sleep(std::time::Duration::from_secs(1)).await;
+
+    let stop_res = client.receiver_stop_app(receiver_session.clone()).await?;
+    println!("stop_res = {stop_res:#?}");
+
+    sleep(std::time::Duration::from_secs(1)).await;
+
+    let status_2 = client.receiver_status().await?;
+    println!("status_2 = {status_2:#?}");
 
     client.close().await?;
     Ok(())
 }
 
-
+async fn sleep(dur: std::time::Duration) {
+    println!("sleeping for {dur:?}");
+    tokio::time::sleep(dur).await;
+}
 
 #[derive(Eq, PartialEq)]
 enum LogMode {

@@ -7,7 +7,13 @@ use crate::{
         CastMessage,
         CastMessagePayload,
     },
-    types::{AppId, MessageType, MessageTypeConst, Namespace, NamespaceConst, RequestId},
+    types::{AppId, /* AppIdConst, */
+            AppSession,
+            EndpointId, EndpointIdConst, ENDPOINT_BROADCAST,
+            /* MediaSession, MediaSessionId, */
+            /* MessageType, */ MessageTypeConst,
+            /* Namespace, */ NamespaceConst,
+            RequestId, /* SessionId */},
     util::named,
 };
 use futures::{
@@ -46,17 +52,38 @@ pub struct Client {
 
     next_request_id: AtomicI32,
     next_command_id: AtomicUsize,
+
+    config: Arc<Config>,
 }
 
+#[derive(Clone, Debug)]
 pub struct Config {
     pub addr: SocketAddr,
+
+    /// `EndpointId` used as the sender, and source of messages we send.
+    ///
+    /// Set `None` for the default, or `Some(a)` will override it.
+    pub sender: Option<EndpointId>,
+}
+
+#[derive(Debug)]
+pub struct LoadMediaArgs {
+    pub media: proxies::media::Media,
+
+    pub current_time: f64,
+    pub autoplay: bool,
+
+    /// None to use default.
+    pub preload_time: Option<f64>,
+
+    // TODO: Decide whether to expose custom data.
+    // custom_data: serde_json::Value,
+
+    // TODO: Add defaults or builder.
 }
 
 pin_project! {
     struct Task<S: TokioAsyncStream> {
-        // #[pin]
-        // conn_framed: tokio_util::codec::Framed<S, CastMessageCodec>,
-
         #[pin]
         conn_framed_sink: SplitSink<Framed<S, CastMessageCodec>, CastMessage>,
 
@@ -71,13 +98,15 @@ pin_project! {
 
         need_flush: bool,
         requests_map: HashMap<RequestId, RequestState>,
+
+        config: Arc<Config>,
     }
 }
 
 #[derive(Debug)]
 struct RequestState {
     response_ns: NamespaceConst,
-    response_type_name: MessageTypeConst,
+    response_type_names: &'static [MessageTypeConst],
     delay_key: DelayKey,
 
     #[allow(dead_code)] // Just for debugging for now.
@@ -110,7 +139,7 @@ struct CastRpc {
     request_message: CastMessage,
     request_id: RequestId,
     response_ns: NamespaceConst,
-    response_type_name: MessageTypeConst,
+    response_type_names: &'static [MessageTypeConst],
 }
 
 #[derive(Debug)]
@@ -154,7 +183,17 @@ static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<Namespace
     ])
 });
 
-use crate::{DEFAULT_RECEIVER_ID, DEFAULT_SENDER_ID};
+pub const DEFAULT_SENDER_ID: EndpointIdConst = "sender-0";
+pub const DEFAULT_RECEIVER_ID: EndpointIdConst = "receiver-0";
+
+/// Well known cast receiver app IDs
+pub mod app {
+    use crate::types::AppIdConst;
+
+    pub const DEFAULT_MEDIA_RECEIVER: AppIdConst = "CC1AD845";
+    pub const BACKDROP_ID: AppIdConst = "E8C28D3C";
+    pub const YOUTUBE_ID: AppIdConst = "233637DE";
+}
 
 impl Config {
     pub async fn connect(self) -> Result<Client> {
@@ -162,15 +201,21 @@ impl Config {
 
         let (task_cmd_tx, task_cmd_rx) = tokio::sync::mpsc::channel(/* buffer: */ 32);
 
-        let task = Task::new(conn, task_cmd_rx);
+        let config = Arc::new(self);
+
+        let task = Task::new(conn, task_cmd_rx, Arc::clone(&config));
 
         let task_join_handle = tokio::spawn(task.main());
 
         let mut client = Client {
             task_join_handle: Some(task_join_handle),
             task_cmd_tx,
-            next_request_id: AtomicI32::new(0),
-            next_command_id: AtomicUsize::new(0),
+
+            // Some broadcasts have `request_id` 0, so don't re-use that.
+            next_request_id: AtomicI32::new(1),
+
+            next_command_id: AtomicUsize::new(1),
+            config,
         };
 
         client.init().await?;
@@ -187,6 +232,94 @@ impl Client {
             = self.json_rpc(payload_req, DEFAULT_RECEIVER_ID.to_string()).await?;
 
         Ok(resp.inner.status)
+    }
+
+    #[named]
+    pub async fn receiver_launch_app(&mut self, destination_id: EndpointId, app_id: AppId)
+    -> Result<(proxies::receiver::Application, proxies::receiver::Status)> {
+        const METHOD_PATH: &str = method_path!("Client");
+
+        let payload_req = json_payload::receiver::LaunchRequest {
+            app_id: app_id.clone(),
+        };
+
+        let resp: Payload<json_payload::receiver::LaunchResponse>
+            = self.json_rpc(payload_req, destination_id).await?;
+
+        let json_payload::receiver::LaunchResponse::OkStatus { status } = resp.inner else {
+            bail!("{METHOD_PATH}: error response:\n\
+                   Launch response: {resp:#?}");
+        };
+
+        let Some(app) = status.applications.iter().find(|app| &app.app_id == &app_id) else {
+            bail!("{METHOD_PATH}: missing expected application\n\
+                   Receiver status: {status:#?}");
+        };
+
+        tracing::debug!(target: METHOD_PATH,
+                        ?app,
+                        ?status,
+                        "Launched app");
+
+        Ok((app.clone(), status))
+    }
+
+    pub async fn receiver_stop_app(&mut self, app_session: AppSession)
+    -> Result<json_payload::receiver::StopResponse> {
+        let payload_req = json_payload::receiver::StopRequest {
+            session_id: app_session.session_id,
+        };
+
+        let resp: Payload<json_payload::receiver::StopResponse>
+            = self.json_rpc(payload_req, app_session.receiver_destination_id).await?;
+
+        // TODO: Convert error responses into Err.
+
+        Ok(resp.inner)
+    }
+
+    pub async fn media_launch_default(&mut self, destination_id: EndpointId)
+    -> Result<(AppSession, proxies::receiver::Status)> {
+        let (app, status) = self.receiver_launch_app(destination_id.clone(),
+                                                     app::DEFAULT_MEDIA_RECEIVER.into()).await?;
+        let session = app.to_app_session(destination_id.clone())?;
+        self.connection_connect(session.app_destination_id.clone()).await?;
+
+        Ok((session, status))
+    }
+
+    // TODO: Decide whether to do this.
+    //       Would run connection_connect, include listening to media status.
+    // pub async fn media_connect(&mut self, destination: EndpointId) -> Result<()> {
+    //     todo!()
+    // }
+
+    #[named]
+    pub async fn media_load(&mut self,
+                            app_session: AppSession,
+                            load_args: LoadMediaArgs)
+    -> Result<json_payload::media::MediaStatus> {
+        let payload_req = json_payload::media::LoadRequest {
+            session_id: app_session.session_id,
+
+            media: load_args.media,
+
+            current_time: load_args.current_time,
+            custom_data: serde_json::Value::Null,
+            autoplay: load_args.autoplay,
+            preload_time: load_args.preload_time.unwrap_or(10_f64),
+        };
+
+        let resp: Payload<json_payload::media::LoadResponse>
+            = self.json_rpc(payload_req, app_session.app_destination_id.clone()).await?;
+
+        let json_payload::media::LoadResponse::MediaStatus(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
     }
 
     pub async fn close(mut self) -> Result<()> {
@@ -209,7 +342,11 @@ impl Client {
         Ok(())
     }
 
-    async fn connection_connect(&mut self, receiver: AppId) -> Result<()> {
+    fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub async fn connection_connect(&mut self, receiver: EndpointId) -> Result<()> {
         let payload_req = json_payload::connection::ConnectRequest {
             user_agent: json_payload::connection::USER_AGENT.to_string(),
         };
@@ -221,14 +358,15 @@ impl Client {
     -> Result<Payload<Resp>>
     where Resp: ResponseInner
     {
-        // let expected_namespace = Resp::CHANNEL_NAMESPACE;
-        let expected_type = Resp::TYPE_NAME;
+        let namespace = Resp::CHANNEL_NAMESPACE;
+        let expected_types = Resp::TYPE_NAMES;
 
-        if payload_dyn.typ != expected_type {
-            bail!("Unexpected payload type\n\
-                   request_id:    {rid:?}\n\
-                   expected_type: {expected_type:?}\n\
-                   type:          {typ:?}",
+        if false && !expected_types.contains(&payload_dyn.typ.as_str()) {
+            bail!("Unexpected type in response payload\n\
+                   request_id:     {rid:?}\n\
+                   namespace:      {namespace:?}\n\
+                   expected_types: {expected_types:?}\n\
+                   type:           {typ:?}",
                   rid = payload_dyn.request_id,
                   typ = payload_dyn.typ);
         }
@@ -240,7 +378,7 @@ impl Client {
         })
     }
 
-    async fn json_send<Req>(&mut self, req: Req, destination: AppId)
+    async fn json_send<Req>(&mut self, req: Req, destination: EndpointId)
     -> Result<()>
     where Req: RequestInner
     {
@@ -256,31 +394,45 @@ impl Client {
         Ok(())
     }
 
-    async fn json_rpc<Req, Resp>(&mut self, req: Req, destination: AppId)
+    #[named]
+    async fn json_rpc<Req, Resp>(&mut self, req: Req, destination: EndpointId)
     -> Result<Payload<Resp>>
     where Req: RequestInner,
           Resp: ResponseInner
     {
         let (request_message, request_id) = self.cast_request_from_inner(req, destination)?;
 
+        let response_ns = Resp::CHANNEL_NAMESPACE;
+        let response_type_names = Resp::TYPE_NAMES;
+
         let cmd_type = TaskCommandType::CastRpc(Box::new(CastRpc {
             request_message,
             request_id,
-            response_ns: Resp::CHANNEL_NAMESPACE,
-            response_type_name: Resp::TYPE_NAME,
+            response_ns,
+            response_type_names,
         }));
 
         let resp_dyn: Box<PayloadDyn> = self.task_cmd(cmd_type).await?;
         let resp: Payload<Resp> = self.response_from_dyn(resp_dyn)?;
 
+        tracing::debug!(target: method_path!("Client"),
+                        response_payload = ?resp,
+                        response_ns,
+                        response_type_name = resp.typ,
+                        expected_response_type_names = ?response_type_names,
+                        request_id,
+                        "json_rpc response");
+
         Ok(resp)
     }
 
     #[named]
-    fn cast_request_from_inner<Req>(&self, req: Req, destination: AppId)
+    fn cast_request_from_inner<Req>(&self, req: Req, destination: EndpointId)
     -> Result<(CastMessage, RequestId)>
     where Req: RequestInner
     {
+        const METHOD_PATH: &str = method_path!("Client");
+
         let request_id = self.take_request_id();
         let payload = Payload::<Req> {
             request_id: Some(request_id),
@@ -288,24 +440,30 @@ impl Client {
             inner: req,
         };
 
+        let sender = self.config().sender();
+        let request_namespace = Req::CHANNEL_NAMESPACE.to_string();
+
+        tracing::debug!(target: method_path!("Client"),
+                        ?payload,
+                        request_id,
+                        request_type = payload.typ,
+                        request_namespace,
+                        sender, destination,
+                        "payload struct");
+
         let payload_json = serde_json::to_string(&payload)?;
 
-        // TODO: Take these as params or config.
-        let source = DEFAULT_SENDER_ID.to_string();
-
-        let namespace = Req::CHANNEL_NAMESPACE.to_string();
-
-        tracing::trace!(target: function_path!(),
+        tracing::trace!(target: method_path!("Client"),
                         payload_json,
                         request_id,
                         request_type = payload.typ,
-                        request_namespace = namespace,
-                        source, destination,
-                        "json payload");
+                        request_namespace,
+                        sender, destination,
+                        "payload json");
 
         let request_message = CastMessage {
-            namespace: Req::CHANNEL_NAMESPACE.to_string(),
-            source,
+            namespace: request_namespace,
+            source: sender,
             destination,
             payload: payload_json.into(),
         };
@@ -415,14 +573,11 @@ impl<S: TokioAsyncStream> Task<S> {
     pub fn new(
         conn: S,
         task_cmd_rx: tokio::sync::mpsc::Receiver::<TaskCommand>,
+        config: Arc<Config>,
     ) -> Task<S> {
-        let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx)
-//            .map(TaskEvent::Cmd)
-            ;
+        let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx);
 
-        let timeout_queue = DelayQueue::<RequestId>::with_capacity(4)
-//            .map(TaskEvent::RpcTimeout)
-            ;
+        let timeout_queue = DelayQueue::<RequestId>::with_capacity(4);
 
         let cast_message_codec = CastMessageCodec;
         let conn_framed = tokio_util::codec::Framed::with_capacity(
@@ -431,8 +586,6 @@ impl<S: TokioAsyncStream> Task<S> {
         let (conn_framed_sink, conn_framed_stream) = conn_framed.split();
 
         Task {
-            //conn_framed,
-
             conn_framed_sink,
             conn_framed_stream,
 
@@ -441,6 +594,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
             need_flush: false,
             requests_map: HashMap::new(),
+            config,
         }
     }
 
@@ -448,14 +602,14 @@ impl<S: TokioAsyncStream> Task<S> {
     async fn main(self) -> Result<()> {
         // TODO: Timeouts for requests, send response and clean up.
 
-        const FUNCTION_PATH: &str = function_path!();
+        const METHOD_PATH: &str = method_path!("Task");
 
         pin! {
             let this = self;
         }
 
         while let Some(event) = this.as_mut().take_next_event().await {
-            tracing::trace!(target: FUNCTION_PATH,
+            tracing::trace!(target: METHOD_PATH,
                             ?event,
                             "event");
 
@@ -470,7 +624,7 @@ impl<S: TokioAsyncStream> Task<S> {
                     },
 
                     TaskCommandType::Shutdown => {
-                        tracing::info!(target: FUNCTION_PATH,
+                        tracing::info!(target: METHOD_PATH,
                                        "shutdown on command");
                         Self::respond_generic(cmd.result_sender, Ok(()));
                         return Ok(());
@@ -487,8 +641,9 @@ impl<S: TokioAsyncStream> Task<S> {
 
                 TaskEvent::Flush(res) => {
                     if let Err(err) = res {
-                        // TODO: Mark connection as dead on reconnect.
-                        tracing::warn!(target: FUNCTION_PATH,
+                        // TODO: Mark connection as dead?
+                        // TODO: Add optional auto reconnect.
+                        tracing::warn!(target: METHOD_PATH,
                                        ?err,
                                        "flush error");
                     }
@@ -497,11 +652,14 @@ impl<S: TokioAsyncStream> Task<S> {
             }
         }
 
-        tracing::info!(target: FUNCTION_PATH,
+        tracing::info!(target: METHOD_PATH,
                        "shutdown on event stream closed");
 
-        // TODO: cleanup? e.g. flush outputs, reset connections,
-        // return errors to response channels?;
+        // TODO: cleanup? e.g.
+        //   * flush outputs
+        //   * reset connections,
+        //   * return errors to response channels
+        //     (once response channel senders are dropped this will happen anyway)
 
         Ok(())
     }
@@ -519,7 +677,8 @@ impl<S: TokioAsyncStream> Task<S> {
 
         // poll_fn???
 
-        // Tried in order.
+        // Streams polled in order with current implementation on first
+        // poll of Merge.
         let streams = (
             &mut (conn_flush_stream.map(TaskEvent::Flush)),
             &mut (proj.task_cmd_rx.map(TaskEvent::Cmd)),
@@ -534,13 +693,13 @@ impl<S: TokioAsyncStream> Task<S> {
 
     #[named]
     async fn handle_send(mut self: Pin<&mut Self>,
-                            send: Box<CastSend>, result_sender: TaskCommandResultSender)
+                         send: Box<CastSend>, result_sender: TaskCommandResultSender)
     {
-        const FUNCTION_PATH: &str = function_path!();
+        const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = tokio::time::Instant::now()
             .checked_add(RPC_TIMEOUT)
-            .unwrap_or_else(|| panic!("{FUNCTION_PATH}: error calculating deadline"));
+            .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
 
         let send_debug = format!("{send:#?}");
 
@@ -551,37 +710,36 @@ impl<S: TokioAsyncStream> Task<S> {
 
         let command_id = &result_sender.command_id;
 
-        tracing::debug!(target: FUNCTION_PATH,
+        tracing::debug!(target: METHOD_PATH,
                         ?deadline,
                         request_id,
                         command_id,
                         ?request_message,
                         "msg send");
 
-        if let Err(err) = self.as_mut().send_raw(request_message, deadline).await {
-            tracing::warn!(target: FUNCTION_PATH,
+        let res = self.as_mut().send_raw(request_message, deadline).await;
+
+        if let Err(ref err) = res {
+            tracing::warn!(target: METHOD_PATH,
                            ?err,
                            send = send_debug,
                            request_id,
                            command_id,
                            "send_raw error");
-
-            Self::respond_send(result_sender, Err(err));
-            return;
         }
 
-        Self::respond_send(result_sender, Ok(()));
+        Self::respond_send(result_sender, res);
     }
 
     #[named]
     async fn handle_rpc_cmd(mut self: Pin<&mut Self>,
                             rpc: Box<CastRpc>, result_sender: TaskCommandResultSender)
     {
-        const FUNCTION_PATH: &str = function_path!();
+        const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = tokio::time::Instant::now()
             .checked_add(RPC_TIMEOUT)
-            .unwrap_or_else(|| panic!("{FUNCTION_PATH}: error calculating deadline"));
+            .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
 
         let rpc_debug = format!("{rpc:#?}");
 
@@ -589,28 +747,28 @@ impl<S: TokioAsyncStream> Task<S> {
             request_message,
             request_id,
             response_ns,
-            response_type_name,
+            response_type_names,
         } = *rpc;
 
         let command_id = &result_sender.command_id;
 
-        tracing::debug!(target: FUNCTION_PATH,
+        tracing::trace!(target: METHOD_PATH,
                         ?deadline,
                         request_id,
                         command_id,
                         ?request_message,
                         response_ns,
-                        response_type_name,
+                        ?response_type_names,
                         "rpc send");
 
         if let Err(err) = self.as_mut().send_raw(request_message, deadline).await {
-            tracing::warn!(target: FUNCTION_PATH,
+            tracing::warn!(target: METHOD_PATH,
                            ?err,
                            rpc = rpc_debug,
                            request_id,
                            command_id,
                            response_ns,
-                           response_type_name,
+                           ?response_type_names,
                            "send_raw error");
 
             Self::respond_rpc(result_sender, Err(err));
@@ -626,7 +784,7 @@ impl<S: TokioAsyncStream> Task<S> {
             delay_key,
 
             response_ns,
-            response_type_name,
+            response_type_names,
             result_sender,
         };
 
@@ -640,6 +798,9 @@ impl<S: TokioAsyncStream> Task<S> {
         *proj.need_flush = true;
 
         // TODO: Don't block the main task when conn sink buffer is full.
+        //       Probably just return a backpressure error immediately,
+        //       no point accumulating another send buffer on top of the bytes
+        //       in the Framed sink.
         let fut = proj.conn_framed_sink.feed(msg);
         tokio::time::timeout_at(deadline, fut).await??;
 
@@ -648,11 +809,11 @@ impl<S: TokioAsyncStream> Task<S> {
 
     #[named]
     async fn handle_msg_read(mut self: Pin<&mut Self>, read_res: Result<CastMessage>) {
-        const FUNCTION_PATH: &str = function_path!();
+        const METHOD_PATH: &str = method_path!("Task");
 
-        let msg = match read_res {
+        let msg: CastMessage = match read_res {
             Err(err) => {
-                tracing::warn!(target: FUNCTION_PATH,
+                tracing::warn!(target: METHOD_PATH,
                                ?err,
                                "Message read error");
                 return;
@@ -660,21 +821,22 @@ impl<S: TokioAsyncStream> Task<S> {
             Ok(msg) => msg,
         };
 
-        tracing::trace!(target: FUNCTION_PATH,
+        tracing::trace!(target: METHOD_PATH,
                         ?msg,
                         "message read");
 
         let msg_ns = msg.namespace.as_str();
         if !JSON_NAMESPACES.contains(msg_ns) {
-            tracing::warn!(target: FUNCTION_PATH,
+            tracing::warn!(target: METHOD_PATH,
                            msg_ns,
                            ?msg,
                            "message namespace not known");
             return;
         }
+
         let pd_json_str = match &msg.payload {
             CastMessagePayload::Binary(_b) => {
-                tracing::warn!(target: FUNCTION_PATH,
+                tracing::warn!(target: METHOD_PATH,
                                msg_ns,
                                ?msg,
                                "binary message not known");
@@ -683,64 +845,90 @@ impl<S: TokioAsyncStream> Task<S> {
             CastMessagePayload::String(s) => s.as_str(),
         };
 
-        tracing::trace!(target: FUNCTION_PATH,
+        tracing::trace!(target: METHOD_PATH,
                         pd_json_str,
                         "message payload json");
 
-        let pd: PayloadDyn = match serde_json::from_str(pd_json_str) {
+        let pd_all_dyn: serde_json::Value = match serde_json::from_str(pd_json_str) {
             Err(err) => {
-                tracing::warn!(target: FUNCTION_PATH,
+                tracing::warn!(target: METHOD_PATH,
                                ?err, ?msg,
-                               "error deserializing json");
+                               "error deserializing json as Value");
                 return;
             },
             Ok(pd) => pd,
         };
-
-        tracing::trace!(target: FUNCTION_PATH,
-                        ?pd,
-                        "message payload");
+        let pd: PayloadDyn = match serde_json::from_str::<Payload<()>>(pd_json_str) {
+            Err(err) => {
+                tracing::warn!(target: METHOD_PATH,
+                               ?err, ?msg,
+                               "error deserializing json");
+                return;
+            },
+            Ok(pd_wrapper) => PayloadDyn {
+                request_id: pd_wrapper.request_id,
+                typ: pd_wrapper.typ,
+                inner: pd_all_dyn,
+            },
+        };
 
         let mut proj = self.as_mut().project();
 
-        let Some(request_id) = pd.request_id else {
-            tracing::warn!(target: FUNCTION_PATH,
-                           ?msg,
-                           "missing request_id in cast message payload");
-            return;
+        let msg_is_broadcast = msg.destination.as_str() == ENDPOINT_BROADCAST;
+        if msg_is_broadcast {
+            tracing::debug!(target: METHOD_PATH,
+                           ?msg, ?pd,
+                           "broadcast message");
+            // TODO: return to client through channel.
+        }
+
+        let request_id = match pd.request_id {
+            Some(0) | None => {
+                // TODO: Handle disconnect message `{ type: "CLOSE" }` sent on error.
+
+                if msg_is_broadcast {
+                    return;
+                }
+
+                tracing::warn!(target: METHOD_PATH,
+                               ?msg, ?pd,
+                               "missing request_id in unicast message payload");
+                return;
+            },
+            Some(id) => id,
         };
 
         let Some(request_state) = proj.requests_map.remove(&request_id) else {
-            tracing::warn!(target: FUNCTION_PATH,
-                           request_id, ?msg,
+            tracing::warn!(target: METHOD_PATH,
+                           request_id, ?msg, ?pd,
                            "missing request state");
             return;
         };
 
         if proj.timeout_queue.as_mut().try_remove(&request_state.delay_key).is_none() {
-            tracing::warn!(target: FUNCTION_PATH,
+            tracing::warn!(target: METHOD_PATH,
                            ?request_state,
-                           ?msg,
+                           ?msg, ?pd,
                            "timeout_queue missing expected delay key");
         }
 
         let result: Result<PayloadDyn> =
             if request_state.response_ns != msg_ns {
                 Err(format_err!(
-                    "{FUNCTION_PATH}: received reply message with unexpected namespace:\n\
+                    "{METHOD_PATH}: received reply message with unexpected namespace:\n\
                      _ request_id    = {request_id}\n\
                      _ expected_ns   = {expected_ns:?}\n\
                      _ msg_ns        = {msg_ns:?}\n\
                      _ request_state = {request_state:#?}",
                     expected_ns = request_state.response_ns))
-            } else if request_state.response_type_name != pd.typ {
+            } else if false && !request_state.response_type_names.contains(&pd.typ.as_str()) {
                 Err(format_err!(
-                    "{FUNCTION_PATH}: received reply message with unexpected type:\n\
-                     _ request_id    = {request_id}\n\
-                     _ expected_type = {expected_type:?}\n\
-                     _ msg_type      = {pd_type:?}\n\
-                     _ request_state = {request_state:#?}",
-                    expected_type = request_state.response_type_name,
+                    "{METHOD_PATH}: received reply message with unexpected type:\n\
+                     _ request_id     = {request_id}\n\
+                     _ expected_types = {expected_types:?}\n\
+                     _ msg_type       = {pd_type:?}\n\
+                     _ request_state  = {request_state:#?}",
+                    expected_types = request_state.response_type_names,
                     pd_type = pd.typ))
             } else {
                 Ok(pd)
@@ -751,7 +939,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
     #[named]
     fn handle_rpc_timeout(mut self: Pin<&mut Self>, expired: DelayExpired<RequestId>) {
-        const FUNCTION_PATH: &str = function_path!();
+        const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = expired.deadline();
         let delay_key = expired.key();
@@ -760,20 +948,20 @@ impl<S: TokioAsyncStream> Task<S> {
         let proj = self.as_mut().project();
 
         let Some(request_state) = proj.requests_map.remove(request_id) else {
-            panic!("{FUNCTION_PATH}: missing request_state in requests_map\n\
+            panic!("{METHOD_PATH}: missing request_state in requests_map\n\
                     request_id: {request_id}");
         };
 
         assert_eq!(delay_key, request_state.delay_key);
 
-        tracing::warn!(target: FUNCTION_PATH,
+        tracing::warn!(target: METHOD_PATH,
                        ?expired,
                        ?deadline,
                        request_id,
                        ?request_state,
                        "rpc timeout");
 
-        let err = format_err!("{FUNCTION_PATH}: RPC timeout\n\
+        let err = format_err!("{METHOD_PATH}: RPC timeout\n\
                                _ request_id:    {request_id}\n\
                                _ deadline:      {deadline:?}\n\
                                _ expired:       {expired:#?}\n\
@@ -955,5 +1143,13 @@ impl codec::Decoder for CastMessageCodec {
         };
 
         Ok(Some(msg))
+    }
+}
+
+impl Config {
+    fn sender(&self) -> EndpointId {
+        self.sender.as_ref()
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_SENDER_ID.to_string())
     }
 }
