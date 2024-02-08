@@ -1,11 +1,13 @@
 [![Docs](https://docs.rs/rust_cast/badge.svg)](https://docs.rs/crate/rust_cast/)
 ![Build Status](https://github.com/azasypkin/rust-cast/actions/workflows/ci.yml/badge.svg)
 
-# Usage
+# `rust_cast`: Rust crate for Chromecast
+
+## Usage
 * [Documentation](https://docs.rs/crate/rust_cast/)
 * Try out [Rust Caster](./examples/rust_caster.rs) example to see this crate in action!
 
-# Build
+## Build
 
 Proto files are taken from [Chromium Open Screen GitHub mirror](https://chromium.googlesource.com/openscreen/+/8cce349b0a595ddf7178d5730e980ace3a1d1a53/cast/common/channel/proto).
 
@@ -16,9 +18,9 @@ use `GENERATE_PROTO` environment variable during build and make sure you have `p
 $ GENERATE_PROTO=true cargo build
 ```
 
-# Run example
+## Run example
 
-## Generic features
+### Generic features
 
 First, you need to figure out the address of the device to connect to. For example, you can use `avahi` with the following command:
 ```bash
@@ -46,7 +48,7 @@ $ cargo run --example rust_caster -- -a 192.168.0.100 --stop-current
 The following app has been stopped: Default Media Receiver (CC1AD845)
 ```
 
-## Media features
+### Media features
 ```bash
 // Stream a video.
 $ cargo run --example rust_caster -- -a 192.168.0.100 -m http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4
@@ -78,25 +80,27 @@ $ cargo run --example rust_caster -- -a 192.168.0.100 --media-app youtube --medi
 
 For all possible values of `--media-type` see [Supported Media for Google Cast](https://developers.google.com/cast/docs/media).
 
-# DNS TXT Record description
+## DNS TXT Record description
 
 * `md` - Model Name (e.g. "Chromecast");
 * `id` - UUID without hyphens of the particular device (e.g. xx12x3x456xx789xx01xx234x56789x0);
-* `fn` - Friendly Name of the device (e.g. "Living Room"); 
+* `fn` - Friendly Name of the device (e.g. "Living Room");
 * `rs` - Unknown (recent share???) (e.g. "Youtube TV");
-* `bs` - Uknonwn (e.g. "XX1XXX2X3456");
+* `bs` - Unkonwn (e.g. "XX1XXX2X3456");
 * `st` - Unknown (e.g. "1");
 * `ca` - Unknown (e.g. "1234");
 * `ic` - Icon path (e.g. "/setup/icon.png");
 * `ve` - Version (e.g. "04").
 
-# Model names
+## Model names
 
 * `Chromecast` - Regular chromecast, supports video/audio;
 * `Chromecast Audio` - Chromecast Audio device, supports only audio.
 
-# Useful links and sources of inspiration
+## Useful links and sources of inspiration
 
-* [DIAL Protocol](http://www.dial-multiscreen.org/);
-* [An implementation of the Chromecast CASTV2 protocol in JS](https://github.com/thibauts/node-castv2);
+* [npm package `castv2`: an implementation of the Chromecast CASTV2 protocol in JS](https://github.com/thibauts/node-castv2);
+    * [npm package `castv2-client`: a higher level wrapper for `castv2`](https://github.com/thibauts/node-castv2-client);
+* [Chromecast Web Sender API](https://developers.google.com/cast/docs/reference/web_sender)
 * [Chromecast - steps closer to a python native api](http://www.clift.org/fred/chromecast-steps-closer-to-a-python-native-api.html);
+* [DIAL Protocol](http://www.dial-multiscreen.org/);
