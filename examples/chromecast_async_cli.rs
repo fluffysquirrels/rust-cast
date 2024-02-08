@@ -24,10 +24,10 @@ async fn main() -> Result<()> {
     let status = client.receiver_status().await?;
     println!("status = {status:#?}");
 
-    let (receiver_session, launch_status) =
+    let (app_session, launch_status) =
         client.media_launch_default(client::DEFAULT_RECEIVER_ID.into()).await?;
     println!(" # launched:\n\
-              _  receiver_session = {receiver_session:#?}\n\
+              _  app_session = {app_session:#?}\n\
               _  status = {launch_status:#?}\n\n");
 
     let media_url =
@@ -46,18 +46,27 @@ async fn main() -> Result<()> {
         preload_time: None, // Use default.
     };
 
-    let media_load_res = client.media_load(receiver_session.clone(), media).await?;
+    let media_load_res = client.media_load(app_session.clone(), media).await?;
     println!("media_load_res = {media_load_res:#?}");
 
-    sleep(std::time::Duration::from_secs(1)).await;
+    sleep(std::time::Duration::from_secs(2)).await;
 
-    let stop_res = client.receiver_stop_app(receiver_session.clone()).await?;
+    let receiver_status = client.receiver_status().await?;
+    println!("receiver_status = {receiver_status:#?}");
+
+    let media_status_res = client.media_status(app_session.clone(),
+                                               /* media_session_id: */ None).await?;
+    println!("media_status_res = {media_status_res:#?}");
+
+    sleep(std::time::Duration::from_secs(2)).await;
+
+    let stop_res = client.receiver_stop_app(app_session.clone()).await?;
     println!("stop_res = {stop_res:#?}");
 
     sleep(std::time::Duration::from_secs(1)).await;
 
-    let status_2 = client.receiver_status().await?;
-    println!("status_2 = {status_2:#?}");
+    let receiver_status_2 = client.receiver_status().await?;
+    println!("receiver_status_2 = {receiver_status_2:#?}");
 
     client.close().await?;
     Ok(())

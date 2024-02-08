@@ -11,6 +11,7 @@ use crate::{
             AppSession,
             EndpointId, EndpointIdConst, ENDPOINT_BROADCAST,
             /* MediaSession, MediaSessionId, */
+            MediaSessionId,
             /* MessageType, */ MessageTypeConst,
             /* Namespace, */ NamespaceConst,
             RequestId, /* SessionId */},
@@ -286,6 +287,28 @@ impl Client {
         self.connection_connect(session.app_destination_id.clone()).await?;
 
         Ok((session, status))
+    }
+
+    // TODO: Better argument types?
+    #[named]
+    pub async fn media_status(&mut self,
+                              app_session: AppSession,
+                              media_session_id: Option<MediaSessionId>)
+    -> Result<json_payload::media::MediaStatus> {
+        let payload_req = json_payload::media::GetStatusRequest {
+            media_session_id,
+        };
+
+        let resp: Payload<json_payload::media::GetStatusResponse>
+            = self.json_rpc(payload_req, app_session.app_destination_id).await?;
+
+        let json_payload::media::GetStatusResponse::MediaStatus(media_status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(media_status)
     }
 
     // TODO: Decide whether to do this.

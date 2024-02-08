@@ -1,6 +1,7 @@
 use crate::{
     cast::proxies,
     types::{AppId,
+            MediaSessionId,
             MessageType, MessageTypeConst,
             /* Namespace, */ NamespaceConst,
             RequestId, SessionId},
@@ -95,6 +96,9 @@ pub mod media {
         pub status: Vec<proxies::media::Status>,
     }
 
+
+
+
     #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct LoadRequest {
@@ -142,6 +146,38 @@ pub mod media {
             MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED,
             MESSAGE_RESPONSE_TYPE_LOAD_FAILED,
             MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE,
+            MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
+        ];
+    }
+
+
+
+    #[derive(Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct GetStatusRequest {
+        pub media_session_id: Option<MediaSessionId>,
+    }
+
+    impl RequestInner for GetStatusRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_GET_STATUS;
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    #[serde(tag = "type",
+            rename_all = "camelCase")]
+    pub enum GetStatusResponse {
+        #[serde(rename = "MEDIA_STATUS")]
+        MediaStatus(MediaStatus),
+
+        #[serde(rename = "INVALID_REQUEST")]
+        InvalidRequest { reason: String },
+    }
+
+    impl ResponseInner for GetStatusResponse {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+            MESSAGE_RESPONSE_TYPE_MEDIA_STATUS,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
     }
