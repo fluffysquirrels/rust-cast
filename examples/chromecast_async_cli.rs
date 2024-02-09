@@ -8,8 +8,8 @@ use chromecast_tokio::{
 //     function_path, named,
 };
 use clap::Parser;
-
 use std::net::SocketAddr;
+use tokio::io::AsyncReadExt;
 
 #[derive(clap::Parser, Clone, Debug)]
 struct Args {
@@ -20,6 +20,7 @@ struct Args {
 #[derive(clap::Subcommand, Clone, Debug)]
 enum Command {
     Demo,
+    HeartbeatTest,
     SetVolume(SetVolumeArgs),
     Status,
 }
@@ -47,6 +48,7 @@ async fn main() -> Result<()> {
 
     match args.command {
         Command::Demo => demo_main(client).await?,
+        Command::HeartbeatTest => heartbeat_test_main(client).await?,
         Command::SetVolume(sub_args) => set_volume_main(client, sub_args).await?,
         Command::Status => status_main(client).await?,
     }
@@ -145,6 +147,34 @@ async fn demo_main(mut client: Client) -> Result<()> {
 
     let receiver_status_2 = client.receiver_status().await?;
     println!("receiver_status_2 = {receiver_status_2:#?}");
+
+    client.close().await?;
+    Ok(())
+}
+
+async fn heartbeat_test_main(mut client: Client) -> Result<()>
+{
+    let receiver_status = client.receiver_status().await?;
+    println!("receiver_status = {receiver_status:#?}");
+
+    client.connection_connect(RECEIVER_ID.to_string()).await?;
+
+
+    let media_ns = AppNamespace::from(lib::json_payload::media::CHANNEL_NAMESPACE);
+
+    if let Some(media_app) =
+        receiver_status.applications.iter().find(
+            |app| app.namespaces.contains(&media_ns))
+    {
+        let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
+        client.connection_connect(session.app_destination_id.clone()).await?;
+//        let media_status = client.media_status(session, /* media_session_id: */ None).await?;
+//        println!("media_status_init = {media_status:#?}");
+    }
+
+    println!("Press Enter to exit . . .");
+    let mut stdin = tokio::io::stdin();
+    let _read = stdin.read_u8().await?;
 
     client.close().await?;
     Ok(())

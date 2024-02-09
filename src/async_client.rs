@@ -935,12 +935,14 @@ impl<S: TokioAsyncStream> Task<S> {
             },
         };
 
+        let pd_type = &pd.typ;
+
         let mut proj = self.as_mut().project();
 
         let msg_is_broadcast = msg.destination.as_str() == ENDPOINT_BROADCAST;
         if msg_is_broadcast {
             tracing::debug!(target: METHOD_PATH,
-                            ?msg, ?pd,
+                            ?msg, ?pd, pd_type,
                             "broadcast message");
             // TODO: return to client through channel.
         }
@@ -949,7 +951,7 @@ impl<S: TokioAsyncStream> Task<S> {
             && pd.typ == json_payload::connection::MESSAGE_TYPE_CLOSE
         {
             tracing::error!(target: METHOD_PATH,
-                            ?msg, ?pd,
+                            ?msg, ?pd, pd_type,
                             "Connection closed message from destination.\n\n\
                              This usually means we were never connected to the destination \
                              (try calling method Client::connection_connect()) or \
@@ -959,14 +961,12 @@ impl<S: TokioAsyncStream> Task<S> {
 
         let request_id = match pd.request_id {
             Some(0) | None => {
-                // TODO: Handle disconnect message `{ type: "CLOSE" }` sent on error.
-
                 if msg_is_broadcast {
                     return;
                 }
 
                 tracing::warn!(target: METHOD_PATH,
-                               ?msg, ?pd,
+                               ?msg, ?pd, pd_type,
                                "missing request_id in unicast message payload");
                 return;
             },
@@ -975,7 +975,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
         let Some(request_state) = proj.requests_map.remove(&request_id) else {
             tracing::warn!(target: METHOD_PATH,
-                           request_id, ?msg, ?pd,
+                           request_id, ?msg, ?pd, pd_type,
                            "missing request state");
             return;
         };
@@ -983,7 +983,7 @@ impl<S: TokioAsyncStream> Task<S> {
         if proj.timeout_queue.as_mut().try_remove(&request_state.delay_key).is_none() {
             tracing::warn!(target: METHOD_PATH,
                            ?request_state,
-                           ?msg, ?pd,
+                           ?msg, ?pd, pd_type,
                            "timeout_queue missing expected delay key");
         }
 
@@ -994,6 +994,7 @@ impl<S: TokioAsyncStream> Task<S> {
                      _ request_id    = {request_id}\n\
                      _ expected_ns   = {expected_ns:?}\n\
                      _ msg_ns        = {msg_ns:?}\n\
+                     _ pd_type       = {pd_type:?}\n\
                      _ request_state = {request_state:#?}",
                     expected_ns = request_state.response_ns))
             } else if false && !request_state.response_type_names.contains(&pd.typ.as_str()) {
@@ -1001,7 +1002,8 @@ impl<S: TokioAsyncStream> Task<S> {
                     "{METHOD_PATH}: received reply message with unexpected type:\n\
                      _ request_id     = {request_id}\n\
                      _ expected_types = {expected_types:?}\n\
-                     _ msg_type       = {pd_type:?}\n\
+                     _ msg_ns         = {msg_ns:?}\n\
+                     _ pd_type        = {pd_type:?}\n\
                      _ request_state  = {request_state:#?}",
                     expected_types = request_state.response_type_names,
                     pd_type = pd.typ))
