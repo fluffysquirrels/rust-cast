@@ -1,26 +1,70 @@
 use chromecast_tokio::{
-//     self as lib,
-    async_client::{self as client, /* Error, */ Result,
+    self as lib,
+    async_client::{self as client, Client, /* Error, */ Result,
                    LoadMediaArgs},
-    cast::proxies,
+    cast::proxies::{self, receiver::AppNamespace},
 //     function_path, named,
-
 };
+use clap::Parser;
+
 use std::net::SocketAddr;
+
+#[derive(clap::Parser, Clone, Debug)]
+struct Args {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(clap::Subcommand, Clone, Debug)]
+enum Command {
+    Demo,
+    Status,
+}
 
 #[tokio::main]
 // #[named]
 async fn main() -> Result<()> {
     init_logging(/* json: */ false)?;
 
-    // TODO: mdns service discovery
+    let args = Args::parse();
 
+    // TODO: mdns service discovery
     let config = client::Config {
         addr: SocketAddr::from(([192, 168, 0, 144], 8009)),
         sender: None, // Use default
     };
-    let mut client = config.connect().await?;
+    let client = config.connect().await?;
 
+    match args.command {
+        Command::Demo => demo_main(client).await?,
+        Command::Status => status_main(client).await?,
+    }
+
+    Ok(())
+}
+
+async fn status_main(mut client: Client) -> Result<()> {
+    let receiver_status = client.receiver_status().await?;
+    println!("receiver_status = {receiver_status:#?}");
+
+    let media_ns = AppNamespace::from(lib::json_payload::media::CHANNEL_NAMESPACE);
+
+    if let Some(media_app) =
+        receiver_status.applications.iter().find(
+            |app| app.namespaces.contains(&media_ns))
+    {
+        let session = media_app.to_app_session(client::DEFAULT_RECEIVER_ID.to_string())?;
+        client.connection_connect(session.app_destination_id.clone()).await?;
+        let media_status = client.media_status(session, /* media_session_id: */ None).await?;
+        println!("media_status = {media_status:#?}");
+    }
+
+    client.close().await?;
+
+    Ok(())
+}
+
+async fn demo_main(mut client: Client) -> Result<()> {
     let status = client.receiver_status().await?;
     println!("status = {status:#?}");
 
@@ -39,6 +83,7 @@ async fn main() -> Result<()> {
             content_type: "".to_string(),
             metadata: None,
             duration: None, // : Option<f32>
+            content_url: None, // : Option<String>
         },
 
         current_time: 0_f64,

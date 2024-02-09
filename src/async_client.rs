@@ -369,11 +369,11 @@ impl Client {
         &self.config
     }
 
-    pub async fn connection_connect(&mut self, receiver: EndpointId) -> Result<()> {
+    pub async fn connection_connect(&mut self, destination: EndpointId) -> Result<()> {
         let payload_req = json_payload::connection::ConnectRequest {
-            user_agent: json_payload::connection::USER_AGENT.to_string(),
+            user_agent: json_payload::USER_AGENT.to_string(),
         };
-        self.json_send(payload_req, receiver).await?;
+        self.json_send(payload_req, destination).await?;
         Ok(())
     }
 
@@ -423,6 +423,8 @@ impl Client {
     where Req: RequestInner,
           Resp: ResponseInner
     {
+        let start = tokio::time::Instant::now();
+
         let (request_message, request_id) = self.cast_request_from_inner(req, destination)?;
 
         let response_ns = Resp::CHANNEL_NAMESPACE;
@@ -438,7 +440,10 @@ impl Client {
         let resp_dyn: Box<PayloadDyn> = self.task_cmd(cmd_type).await?;
         let resp: Payload<Resp> = self.response_from_dyn(resp_dyn)?;
 
+        let elapsed = start.elapsed();
+
         tracing::debug!(target: method_path!("Client"),
+                        ?elapsed,
                         response_payload = ?resp,
                         response_ns,
                         response_type_name = resp.typ,
@@ -900,9 +905,21 @@ impl<S: TokioAsyncStream> Task<S> {
         let msg_is_broadcast = msg.destination.as_str() == ENDPOINT_BROADCAST;
         if msg_is_broadcast {
             tracing::debug!(target: METHOD_PATH,
-                           ?msg, ?pd,
-                           "broadcast message");
+                            ?msg, ?pd,
+                            "broadcast message");
             // TODO: return to client through channel.
+        }
+
+        if msg_ns == json_payload::connection::CHANNEL_NAMESPACE
+            && pd.typ == json_payload::connection::MESSAGE_TYPE_CLOSE
+        {
+            tracing::error!(target: METHOD_PATH,
+                            ?msg, ?pd,
+                            "Connection closed message from destination.\n\n\
+                             This usually means we were never connected to the destination \
+                             (try calling method Client::connection_connect()) or \
+                             we sent an invalid request.");
+            return;
         }
 
         let request_id = match pd.request_id {

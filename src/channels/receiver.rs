@@ -407,6 +407,8 @@ where
             volume: proxies::receiver::Volume {
                 level: volume.level,
                 muted: volume.muted,
+                control_type: None,
+                step_interval: None,
             },
         })?;
 

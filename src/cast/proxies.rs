@@ -197,6 +197,8 @@ pub mod media {
 
         #[serde(skip_serializing_if = "Option::is_none")]
         pub duration: Option<f32>,
+
+        pub content_url: Option<String>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -444,44 +446,56 @@ pub mod receiver {
     }
 
     #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "camelCase")]
     pub struct Status {
         #[serde(default)]
         pub applications: Vec<Application>,
 
-        #[serde(rename = "isActiveInput", default)]
+        #[serde(default)]
         pub is_active_input: bool,
 
-        #[serde(rename = "isStandBy", default)]
+        #[serde(default)]
         pub is_stand_by: bool,
 
         /// Volume parameters of the currently active cast device.
         pub volume: Volume,
+
+        // pub user_eq: ??,
     }
 
     #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "camelCase")]
     pub struct Application {
-        #[serde(rename = "appId")]
         pub app_id: String,
-
-        #[serde(rename = "sessionId")]
         pub session_id: String,
-
-        #[serde(rename = "transportId", default)]
         pub transport_id: String,
 
         #[serde(default)]
         pub namespaces: Vec<AppNamespace>,
-
-        #[serde(rename = "displayName")]
         pub display_name: String,
-
-        #[serde(rename = "statusText")]
         pub status_text: String,
+        pub app_type: String,
+        pub icon_url: String,
+        pub is_idle_screen: bool,
+        pub launched_from_cloud: bool,
+        pub universal_app_id: String,
     }
 
-    #[derive(Clone, Deserialize, Debug)]
+    #[derive(Clone, Deserialize, Debug, Eq, PartialEq)]
     pub struct AppNamespace {
         pub name: String,
+    }
+
+    impl From<&str> for AppNamespace {
+        fn from(s: &str) -> AppNamespace {
+            AppNamespace::from(s.to_string())
+        }
+    }
+
+    impl From<String> for AppNamespace {
+        fn from(s: String) -> AppNamespace {
+            AppNamespace { name: s }
+        }
     }
 
     /// Structure that describes possible cast device volume options.
@@ -491,6 +505,9 @@ pub mod receiver {
         pub level: Option<f32>,
         /// Mute/unmute state.
         pub muted: Option<bool>,
+
+        pub control_type: Option<String>,
+        pub step_interval: Option<f32>,
     }
 
     #[derive(Deserialize, Debug)]

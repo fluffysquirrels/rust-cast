@@ -601,6 +601,7 @@ where
                 content_type: media.content_type.clone(),
                 metadata,
                 duration: media.duration,
+                content_url: None,
             },
 
             current_time: 0_f64,
@@ -877,6 +878,7 @@ where
                 content_type: media.content_type.clone(),
                 metadata: get_metadata(&media),
                 duration: media.duration,
+                content_url: None,
             })
             .collect::<Vec<proxies::media::Media>>();
 
@@ -930,6 +932,7 @@ where
                 content_type: media.content_type.clone(),
                 metadata: get_metadata(&media),
                 duration: media.duration,
+                content_url: None,
             })
             .collect::<Vec<proxies::media::Media>>();
 

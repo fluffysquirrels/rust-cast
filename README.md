@@ -103,4 +103,7 @@ For all possible values of `--media-type` see [Supported Media for Google Cast](
     * [npm package `castv2-client`: a higher level wrapper for `castv2`](https://github.com/thibauts/node-castv2-client);
 * [Chromecast Web Sender API](https://developers.google.com/cast/docs/reference/web_sender)
 * [Chromecast - steps closer to a python native api](http://www.clift.org/fred/chromecast-steps-closer-to-a-python-native-api.html);
+* [Hackernoon article: The Chromecast Protocol - A Brief Look](https://hackernoon.com/the-chromecast-protocol-a-brief-look) by GNOME GSoc 2022 Intern `@kyteinsky`
+    * [Original post](https://kyteinsky.github.io/p/chromecast-protocol/) on `@kyteinsky`'s blog
+* [`openscreen` source in Chromium codebase](https://source.chromium.org/chromium/chromium/src/+/main:third_party/openscreen/;bpv=0;bpt=0)
 * [DIAL Protocol](http://www.dial-multiscreen.org/);

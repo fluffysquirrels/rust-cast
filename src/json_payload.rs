@@ -36,12 +36,15 @@ pub trait ResponseInner: Debug + DeserializeOwned
     const TYPE_NAMES: &'static [MessageTypeConst];
 }
 
+pub const USER_AGENT: &str = "RustCast; https://github.com/azasypkin/rust-cast";
+
 pub mod connection {
     use super::*;
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.connection";
 
-    pub const USER_AGENT: &str = "RustCast";
+    pub const MESSAGE_TYPE_CONNECT: MessageTypeConst = "CONNECT";
+    pub const MESSAGE_TYPE_CLOSE: MessageTypeConst = "CLOSE";
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -51,7 +54,7 @@ pub mod connection {
 
     impl RequestInner for ConnectRequest {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = "CONNECT";
+        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_CONNECT;
     }
 
     #[derive(Debug, Deserialize)]
@@ -60,10 +63,8 @@ pub mod connection {
 
     impl ResponseInner for ConnectResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &["CONNECT"];
+        const TYPE_NAMES: &'static [MessageTypeConst] = &[MESSAGE_TYPE_CONNECT];
     }
-
-    const MESSAGE_TYPE_CLOSE: MessageTypeConst = "CLOSE";
 }
 
 pub mod media {
