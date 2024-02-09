@@ -198,9 +198,14 @@ pub mod receiver {
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.receiver";
 
-    const MESSAGE_TYPE_RECEIVER_STATUS: &str = "RECEIVER_STATUS";
-    const MESSAGE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
-    const MESSAGE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
+    const MESSAGE_REQUEST_TYPE_LAUNCH: &str = "LAUNCH";
+    const MESSAGE_REQUEST_TYPE_STOP: &str = "STOP";
+    const MESSAGE_REQUEST_TYPE_GET_STATUS: &str = "GET_STATUS";
+    const MESSAGE_REQUEST_TYPE_SET_VOLUME: &str = "SET_VOLUME";
+
+    const MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS: &str = "RECEIVER_STATUS";
+    const MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
+    const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -219,7 +224,7 @@ pub mod receiver {
 
     impl ResponseInner for StatusResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[MESSAGE_TYPE_RECEIVER_STATUS];
+        const TYPE_NAMES: &'static [MessageTypeConst] = &[MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS];
     }
 
 
@@ -233,7 +238,7 @@ pub mod receiver {
 
     impl RequestInner for LaunchRequest {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = "LAUNCH";
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_LAUNCH;
     }
 
     #[derive(Debug, Deserialize)]
@@ -260,9 +265,9 @@ pub mod receiver {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
         // const TYPE_NAME: MessageTypeConst = "RECEIVER_STATUS";
         const TYPE_NAMES: &'static [MessageTypeConst] = &[
-            MESSAGE_TYPE_INVALID_REQUEST,
-            MESSAGE_TYPE_LAUNCH_ERROR,
-            MESSAGE_TYPE_RECEIVER_STATUS,
+            MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
+            MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR,
+            MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS,
         ];
     }
 
@@ -276,7 +281,7 @@ pub mod receiver {
 
     impl RequestInner for StopRequest {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = "STOP";
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_STOP;
     }
 
     #[derive(Debug, Deserialize)]
@@ -297,8 +302,44 @@ pub mod receiver {
     impl ResponseInner for StopResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
         const TYPE_NAMES: &'static [MessageTypeConst] = &[
-            MESSAGE_TYPE_RECEIVER_STATUS,
-            MESSAGE_TYPE_INVALID_REQUEST,
+            MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS,
+            MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
+        ];
+    }
+
+
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SetVolumeRequest {
+        pub volume: proxies::receiver::Volume,
+    }
+
+    impl RequestInner for SetVolumeRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_SET_VOLUME;
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(tag = "type",
+            rename_all = "camelCase")]
+    pub enum SetVolumeResponse {
+        #[serde(rename = "RECEIVER_STATUS")]
+        OkStatus {
+            status: proxies::receiver::Status,
+        },
+
+        #[serde(rename = "INVALID_REQUEST")]
+        InvalidRequest {
+            reason: String,
+        },
+    }
+
+    impl ResponseInner for SetVolumeResponse {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+            MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS,
+            MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
     }
 }

@@ -1,7 +1,9 @@
+use anyhow::bail;
 use chromecast_tokio::{
     self as lib,
     async_client::{self as client, Client, /* Error, */ Result,
-                   LoadMediaArgs},
+                   LoadMediaArgs,
+                   DEFAULT_RECEIVER_ID as RECEIVER_ID},
     cast::proxies::{self, receiver::AppNamespace},
 //     function_path, named,
 };
@@ -18,7 +20,15 @@ struct Args {
 #[derive(clap::Subcommand, Clone, Debug)]
 enum Command {
     Demo,
+    SetVolume(SetVolumeArgs),
     Status,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct SetVolumeArgs {
+    /// Set volume level as a float between 0.0 and 1.0
+    #[arg(long)]
+    level: f32,
 }
 
 #[tokio::main]
@@ -37,6 +47,7 @@ async fn main() -> Result<()> {
 
     match args.command {
         Command::Demo => demo_main(client).await?,
+        Command::SetVolume(sub_args) => set_volume_main(client, sub_args).await?,
         Command::Status => status_main(client).await?,
     }
 
@@ -53,11 +64,33 @@ async fn status_main(mut client: Client) -> Result<()> {
         receiver_status.applications.iter().find(
             |app| app.namespaces.contains(&media_ns))
     {
-        let session = media_app.to_app_session(client::DEFAULT_RECEIVER_ID.to_string())?;
+        let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
         client.connection_connect(session.app_destination_id.clone()).await?;
         let media_status = client.media_status(session, /* media_session_id: */ None).await?;
         println!("media_status = {media_status:#?}");
     }
+
+    client.close().await?;
+
+    Ok(())
+}
+
+async fn set_volume_main(mut client: Client, sub_args: SetVolumeArgs) -> Result<()> {
+    let level = sub_args.level;
+
+    if level < 0.0 || level > 1.0 {
+        bail!("Bad volume level {level}; it must be between 0.0 and 1.0");
+    }
+
+    let volume = proxies::receiver::Volume {
+        level: Some(level),
+        muted: None,
+
+        control_type: None,
+        step_interval: None,
+    };
+    let status = client.receiver_set_volume(RECEIVER_ID.to_string(), volume).await?;
+    println!("status = {status:#?}");
 
     client.close().await?;
 
@@ -69,7 +102,7 @@ async fn demo_main(mut client: Client) -> Result<()> {
     println!("status = {status:#?}");
 
     let (app_session, launch_status) =
-        client.media_launch_default(client::DEFAULT_RECEIVER_ID.into()).await?;
+        client.media_launch_default(RECEIVER_ID.into()).await?;
     println!(" # launched:\n\
               _  app_session = {app_session:#?}\n\
               _  status = {launch_status:#?}\n\n");

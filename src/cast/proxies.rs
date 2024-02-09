@@ -500,6 +500,7 @@ pub mod receiver {
 
     /// Structure that describes possible cast device volume options.
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Volume {
         /// Volume level.
         pub level: Option<f32>,
@@ -511,8 +512,8 @@ pub mod receiver {
     }
 
     #[derive(Deserialize, Debug)]
+    #[serde(rename_all = "camelCase")]
     pub struct LaunchErrorReply {
-        #[serde(rename = "requestId")]
         pub request_id: i32,
 
         #[serde(rename = "type")]

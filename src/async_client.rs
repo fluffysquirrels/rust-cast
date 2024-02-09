@@ -237,7 +237,8 @@ impl Client {
 
     #[named]
     pub async fn receiver_launch_app(&mut self, destination_id: EndpointId, app_id: AppId)
-    -> Result<(proxies::receiver::Application, proxies::receiver::Status)> {
+    -> Result<(proxies::receiver::Application, proxies::receiver::Status)>
+    {
         const METHOD_PATH: &str = method_path!("Client");
 
         let payload_req = json_payload::receiver::LaunchRequest {
@@ -265,18 +266,52 @@ impl Client {
         Ok((app.clone(), status))
     }
 
+    #[named]
     pub async fn receiver_stop_app(&mut self, app_session: AppSession)
-    -> Result<json_payload::receiver::StopResponse> {
-        let payload_req = json_payload::receiver::StopRequest {
+    -> Result<proxies::receiver::Status>
+    {
+        use json_payload::receiver::{StopRequest, StopResponse};
+
+        const METHOD_PATH: &str = method_path!("Client");
+
+        let payload_req = StopRequest {
             session_id: app_session.session_id,
         };
 
-        let resp: Payload<json_payload::receiver::StopResponse>
+        let resp: Payload<StopResponse>
             = self.json_rpc(payload_req, app_session.receiver_destination_id).await?;
 
-        // TODO: Convert error responses into Err.
+        let StopResponse::OkStatus { status } = resp.inner else {
+            bail!("{METHOD_PATH}: error response\n\
+                   response: {resp:#?}");
+        };
 
-        Ok(resp.inner)
+        Ok(status)
+    }
+
+    #[named]
+    pub async fn receiver_set_volume(&mut self,
+                                     destination_id: EndpointId,
+                                     volume: proxies::receiver::Volume)
+    -> Result<proxies::receiver::Status>
+    {
+        use json_payload::receiver::{SetVolumeRequest, SetVolumeResponse};
+
+        const METHOD_PATH: &str = method_path!("Client");
+
+        let payload_req = SetVolumeRequest {
+            volume,
+        };
+
+        let resp: Payload<SetVolumeResponse>
+            = self.json_rpc(payload_req, destination_id).await?;
+
+        let SetVolumeResponse::OkStatus { status } = resp.inner else {
+            bail!("{METHOD_PATH}: error response\n\
+                   response: {resp:#?}");
+        };
+
+        Ok(status)
     }
 
     pub async fn media_launch_default(&mut self, destination_id: EndpointId)
