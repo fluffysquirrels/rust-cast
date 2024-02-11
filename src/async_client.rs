@@ -854,6 +854,31 @@ impl<S: TokioAsyncStream> Task<S> {
         self.as_mut().requests_map.insert(request_id, state);
     }
 
+    #[named]
+    async fn send_logged(mut self: Pin<&mut Self>, msg: CastMessage) {
+        const METHOD_PATH: &str = method_path!("Task");
+
+        let deadline = tokio::time::Instant::now()
+            .checked_add(RPC_TIMEOUT)
+            .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
+
+        let msg_debug = format!("{msg:#?}");
+
+        tracing::debug!(target: METHOD_PATH,
+                        ?deadline,
+                        ?msg,
+                        "msg send");
+
+        let res = self.as_mut().send_raw(msg, deadline).await;
+
+        if let Err(ref err) = res {
+            tracing::warn!(target: METHOD_PATH,
+                           ?err,
+                           msg = msg_debug,
+                           "send_raw error");
+        }
+    }
+
     async fn send_raw(self: Pin<&mut Self>, msg: CastMessage, deadline: tokio::time::Instant
     ) -> Result<()> {
         let mut proj = self.project();
@@ -937,8 +962,6 @@ impl<S: TokioAsyncStream> Task<S> {
 
         let pd_type = &pd.typ;
 
-        let mut proj = self.as_mut().project();
-
         let msg_is_broadcast = msg.destination.as_str() == ENDPOINT_BROADCAST;
         if msg_is_broadcast {
             tracing::debug!(target: METHOD_PATH,
@@ -947,6 +970,11 @@ impl<S: TokioAsyncStream> Task<S> {
             // TODO: return to client through channel.
         }
 
+        // TODO: Split off special case handling.
+
+        // # Special message cases
+
+        // Channel close
         if msg_ns == json_payload::connection::CHANNEL_NAMESPACE
             && pd.typ == json_payload::connection::MESSAGE_TYPE_CLOSE
         {
@@ -956,6 +984,14 @@ impl<S: TokioAsyncStream> Task<S> {
                              This usually means we were never connected to the destination \
                              (try calling method Client::connection_connect()) or \
                              we sent an invalid request.");
+            return;
+        }
+
+        // Heartbeat ping from remote; reply with a pong.
+        if msg_ns == json_payload::heartbeat::CHANNEL_NAMESPACE
+            && pd.typ == json_payload::heartbeat::MESSAGE_TYPE_PING
+        {
+            self.handle_read_ping(msg.source).await;
             return;
         }
 
@@ -972,6 +1008,8 @@ impl<S: TokioAsyncStream> Task<S> {
             },
             Some(id) => id,
         };
+
+        let mut proj = self.as_mut().project();
 
         let Some(request_state) = proj.requests_map.remove(&request_id) else {
             tracing::warn!(target: METHOD_PATH,
@@ -1047,6 +1085,40 @@ impl<S: TokioAsyncStream> Task<S> {
                           Err(err));
     }
 
+    #[named]
+    async fn handle_read_ping(mut self: Pin<&mut Self>, destination: EndpointId) {
+        let source = self.as_mut().config().sender();
+        let pong_pd = Payload::<json_payload::heartbeat::Pong> {
+            request_id: None,
+            typ: json_payload::heartbeat::MESSAGE_TYPE_PONG.into(),
+            inner: json_payload::heartbeat::Pong {},
+        };
+        tracing::debug!(target: method_path!("Task"),
+                        ?pong_pd,
+                        source, destination,
+                        "pong payload struct");
+
+        let pong_pd_json = match serde_json::to_string(&pong_pd) {
+            Ok(j) => j,
+            Err(err) => {
+                tracing::error!(target: method_path!("Task"),
+                                ?err,
+                                ?pong_pd,
+                                source, destination,
+                                "serde_json serialisation error for pong payload");
+                return;
+            },
+        };
+
+        let pong_msg = CastMessage {
+            namespace: json_payload::heartbeat::CHANNEL_NAMESPACE.into(),
+            source, destination,
+            payload: pong_pd_json.into(),
+        };
+
+        self.send_logged(pong_msg).await
+    }
+
     fn respond_rpc(result_sender: TaskCommandResultSender,
                    result: Result<PayloadDyn>)
     {
@@ -1083,6 +1155,10 @@ impl<S: TokioAsyncStream> Task<S> {
                     ?unsent,
                     "Task::respond: result channel dropped"),
         }
+    }
+
+    fn config(&self) -> &Config {
+        &self.config
     }
 }
 

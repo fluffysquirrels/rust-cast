@@ -189,8 +189,26 @@ pub mod heartbeat {
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.heartbeat";
 
-    const MESSAGE_TYPE_PING: MessageTypeConst = "PING";
-    const MESSAGE_TYPE_PONG: MessageTypeConst = "PONG";
+    pub const MESSAGE_TYPE_PING: MessageTypeConst = "PING";
+    pub const MESSAGE_TYPE_PONG: MessageTypeConst = "PONG";
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Ping {}
+
+    impl RequestInner for Ping {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PING;
+    }
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Pong {}
+
+    impl RequestInner for Pong {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PONG;
+    }
 }
 
 pub mod receiver {

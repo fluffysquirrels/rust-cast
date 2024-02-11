@@ -199,26 +199,29 @@ pub mod media {
         pub duration: Option<f32>,
 
         pub content_url: Option<String>,
+
+        #[serde(default)]
+        pub custom_data: CustomData,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct Metadata {
-        #[serde(rename = "metadataType")]
         pub metadata_type: u32,
 
         #[serde(skip_serializing_if = "Option::is_none")]
         pub title: Option<String>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "seriesTitle")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub series_title: Option<String>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "albumName")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub album_name: Option<String>,
 
         #[serde(skip_serializing_if = "Option::is_none")]
         pub subtitle: Option<String>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "albumArtist")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub album_artist: Option<String>,
 
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -227,15 +230,16 @@ pub mod media {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub composer: Option<String>,
 
+        #[serde(default)]
         pub images: Vec<Image>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "releaseDate")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub release_date: Option<String>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "originalAirDate")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub original_air_date: Option<String>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "creationDateTime")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub creation_date_time: Option<String>,
 
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -256,10 +260,10 @@ pub mod media {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub episode: Option<u32>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "trackNumber")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub track_number: Option<u32>,
 
-        #[serde(skip_serializing_if = "Option::is_none", rename = "discNumber")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub disc_number: Option<u32>,
 
         #[serde(skip_serializing_if = "Option::is_none")]

@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    cast::proxies::{self, media::Item},
+    cast::proxies::{self, media::CustomData, media::Item},
     errors::Error,
     message_manager::{CastMessage, CastMessagePayload, MessageManager},
     Lrc,
@@ -602,6 +602,7 @@ where
                 metadata,
                 duration: media.duration,
                 content_url: None,
+                custom_data: CustomData::default(),
             },
 
             current_time: 0_f64,
@@ -879,6 +880,7 @@ where
                 metadata: get_metadata(&media),
                 duration: media.duration,
                 content_url: None,
+                custom_data: CustomData::default(),
             })
             .collect::<Vec<proxies::media::Media>>();
 
@@ -933,6 +935,7 @@ where
                 metadata: get_metadata(&media),
                 duration: media.duration,
                 content_url: None,
+                custom_data: CustomData::default(),
             })
             .collect::<Vec<proxies::media::Media>>();
 

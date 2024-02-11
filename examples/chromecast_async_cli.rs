@@ -4,7 +4,7 @@ use chromecast_tokio::{
     async_client::{self as client, Client, /* Error, */ Result,
                    LoadMediaArgs,
                    DEFAULT_RECEIVER_ID as RECEIVER_ID},
-    cast::proxies::{self, receiver::AppNamespace},
+    cast::proxies::{self, media::CustomData, receiver::AppNamespace},
 //     function_path, named,
 };
 use clap::Parser;
@@ -20,9 +20,9 @@ struct Args {
 #[derive(clap::Subcommand, Clone, Debug)]
 enum Command {
     Demo,
-    HeartbeatTest,
+    Heartbeat,
     SetVolume(SetVolumeArgs),
-    Status,
+    Status(StatusArgs),
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -30,6 +30,13 @@ struct SetVolumeArgs {
     /// Set volume level as a float between 0.0 and 1.0
     #[arg(long)]
     level: f32,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct StatusArgs {
+    /// Pass flag to stay connected and follow status until stopped.
+    #[arg(long, default_value_t = false)]
+    follow: bool,
 }
 
 #[tokio::main]
@@ -48,15 +55,15 @@ async fn main() -> Result<()> {
 
     match args.command {
         Command::Demo => demo_main(client).await?,
-        Command::HeartbeatTest => heartbeat_test_main(client).await?,
+        Command::Heartbeat => heartbeat_main(client).await?,
         Command::SetVolume(sub_args) => set_volume_main(client, sub_args).await?,
-        Command::Status => status_main(client).await?,
+        Command::Status(sub_args) => status_main(client, sub_args).await?,
     }
 
     Ok(())
 }
 
-async fn status_main(mut client: Client) -> Result<()> {
+async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
     let receiver_status = client.receiver_status().await?;
     println!("receiver_status = {receiver_status:#?}");
 
@@ -70,6 +77,10 @@ async fn status_main(mut client: Client) -> Result<()> {
         client.connection_connect(session.app_destination_id.clone()).await?;
         let media_status = client.media_status(session, /* media_session_id: */ None).await?;
         println!("media_status = {media_status:#?}");
+    }
+
+    if sub_args.follow {
+        pause().await?;
     }
 
     client.close().await?;
@@ -119,6 +130,7 @@ async fn demo_main(mut client: Client) -> Result<()> {
             metadata: None,
             duration: None, // : Option<f32>
             content_url: None, // : Option<String>
+            custom_data: CustomData::default(),
         },
 
         current_time: 0_f64,
@@ -152,29 +164,11 @@ async fn demo_main(mut client: Client) -> Result<()> {
     Ok(())
 }
 
-async fn heartbeat_test_main(mut client: Client) -> Result<()>
+async fn heartbeat_main(mut client: Client) -> Result<()>
 {
-    let receiver_status = client.receiver_status().await?;
-    println!("receiver_status = {receiver_status:#?}");
-
     client.connection_connect(RECEIVER_ID.to_string()).await?;
 
-
-    let media_ns = AppNamespace::from(lib::json_payload::media::CHANNEL_NAMESPACE);
-
-    if let Some(media_app) =
-        receiver_status.applications.iter().find(
-            |app| app.namespaces.contains(&media_ns))
-    {
-        let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
-        client.connection_connect(session.app_destination_id.clone()).await?;
-//        let media_status = client.media_status(session, /* media_session_id: */ None).await?;
-//        println!("media_status_init = {media_status:#?}");
-    }
-
-    println!("Press Enter to exit . . .");
-    let mut stdin = tokio::io::stdin();
-    let _read = stdin.read_u8().await?;
+    pause().await?;
 
     client.close().await?;
     Ok(())
@@ -183,6 +177,13 @@ async fn heartbeat_test_main(mut client: Client) -> Result<()>
 async fn sleep(dur: std::time::Duration) {
     println!("sleeping for {dur:?}");
     tokio::time::sleep(dur).await;
+}
+
+async fn pause() -> Result<()> {
+    println!("Press Enter to exit . . .");
+    let mut stdin = tokio::io::stdin();
+    let _read = stdin.read_u8().await?;
+    Ok(())
 }
 
 #[derive(Eq, PartialEq)]
