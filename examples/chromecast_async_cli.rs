@@ -8,8 +8,12 @@ use chromecast_tokio::{
 //     function_path, named,
 };
 use clap::Parser;
+use futures::StreamExt;
 use std::net::SocketAddr;
-use tokio::io::AsyncReadExt;
+use tokio::{
+    io::AsyncReadExt,
+    pin,
+};
 
 #[derive(clap::Parser, Clone, Debug)]
 struct Args {
@@ -69,8 +73,8 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
 
     let media_ns = AppNamespace::from(lib::payload::media::CHANNEL_NAMESPACE);
 
-    if let Some(media_app) =
-        receiver_status.applications.iter().find(
+    for media_app in
+        receiver_status.applications.iter().filter(
             |app| app.namespaces.contains(&media_ns))
     {
         let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
@@ -80,7 +84,41 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
     }
 
     if sub_args.follow {
-        pause().await?;
+        let listener = client.listen_to_status();
+
+        pin! {
+            let listen_stream = futures::stream::unfold(
+                listener, |mut l: client::StatusListener| async move {
+                    match l.recv().await {
+                        Ok(update) => Some((update, l)),
+
+                        // Err means no more broadcast::Sender's are left to send events,
+                        // i.e. the `Client` has been dropped.
+                        Err(_) => None,
+                    }
+                });
+            let cancel_stream = futures::stream::once(pause());
+        };
+
+
+        enum Event {
+            Update(client::StatusUpdate),
+            UserExit,
+        }
+
+        let mut merged = futures_concurrency::stream::Merge::merge((
+            listen_stream.map(Event::Update),
+            cancel_stream.map(|_| Event::UserExit),
+        ));
+
+        while let Some(event) = merged.next().await {
+            match event {
+                Event::Update(update) => {
+                    println!(" # listener status update = {update:#?}\n # ====\n\n");
+                },
+                Event::UserExit => break,
+            }
+        }
     }
 
     client.close().await?;

@@ -1,5 +1,6 @@
 use anyhow::{bail, format_err};
 use bytes::{Buf, BufMut, BytesMut};
+use chrono::{DateTime, Utc};
 use crate::{
     cast::proxies,
     message::{
@@ -35,6 +36,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     pin,
+    sync::broadcast,
 };
 use tokio_util::{
     codec::{self, Framed},
@@ -54,10 +56,11 @@ pub struct Client {
     next_request_id: AtomicI32,
     next_command_id: AtomicUsize,
 
-    config: Arc<Config>,
+    shared: Arc<Shared>,
 }
 
 #[derive(Clone, Debug)]
+// TODO: Add builder or default instance.
 pub struct Config {
     pub addr: SocketAddr,
 
@@ -65,6 +68,12 @@ pub struct Config {
     ///
     /// Set `None` for the default, or `Some(a)` will override it.
     pub sender: Option<EndpointId>,
+}
+
+/// Data shared between `Client` and its `Task`.
+struct Shared {
+    config: Config,
+    status_sender: broadcast::Sender<StatusUpdate>,
 }
 
 #[derive(Debug)]
@@ -100,7 +109,7 @@ pin_project! {
         need_flush: bool,
         requests_map: HashMap<RequestId, RequestState>,
 
-        config: Arc<Config>,
+        shared: Arc<Shared>,
     }
 }
 
@@ -167,10 +176,30 @@ type CommandId = usize;
 
 struct CastMessageCodec;
 
+pub struct StatusListener {
+    receiver: broadcast::Receiver<StatusUpdate>,
+}
+
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct StatusUpdate {
+    pub time: DateTime<Utc>,
+    pub msg: StatusMessage,
+}
+
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum StatusMessage {
+    Disconnect,
+    Media(payload::media::Status),
+    Receiver(payload::receiver::Status),
+}
+
 /// Duration for the Task to do something locally. (Probably a bit high).
 const LOCAL_TASK_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_000);
 
 /// Duration for an RPC request and response to the Chromecast.
+// TODO: Probably should be configurable.
 const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(5_000);
 
 const DATA_BUFFER_LEN: usize = 64 * 1024;
@@ -192,8 +221,8 @@ pub mod app {
     use crate::types::AppIdConst;
 
     pub const DEFAULT_MEDIA_RECEIVER: AppIdConst = "CC1AD845";
-    pub const BACKDROP_ID: AppIdConst = "E8C28D3C";
-    pub const YOUTUBE_ID: AppIdConst = "233637DE";
+    pub const BACKDROP: AppIdConst = "E8C28D3C";
+    pub const YOUTUBE: AppIdConst = "233637DE";
 }
 
 impl Config {
@@ -202,21 +231,24 @@ impl Config {
 
         let (task_cmd_tx, task_cmd_rx) = tokio::sync::mpsc::channel(/* buffer: */ 32);
 
-        let config = Arc::new(self);
+        let shared = Arc::new(Shared {
+            config: self,
+            status_sender: broadcast::Sender::new(/* buffer capacity: */ 8),
+        });
 
-        let task = Task::new(conn, task_cmd_rx, Arc::clone(&config));
+        let task = Task::new(conn, task_cmd_rx, Arc::clone(&shared));
 
-        let task_join_handle = tokio::spawn(task.main());
+        let task_join_handle = Some(tokio::spawn(task.main()));
 
         let mut client = Client {
-            task_join_handle: Some(task_join_handle),
+            task_join_handle,
             task_cmd_tx,
 
             // Some broadcasts have `request_id` 0, so don't re-use that.
             next_request_id: AtomicI32::new(1),
 
             next_command_id: AtomicUsize::new(1),
-            config,
+            shared,
         };
 
         client.init().await?;
@@ -227,12 +259,12 @@ impl Config {
 
 impl Client {
     pub async fn receiver_status(&mut self) -> Result<proxies::receiver::Status> {
-        let payload_req = payload::receiver::StatusRequest {};
+        let payload_req = payload::receiver::GetStatusRequest {};
 
-        let resp: Payload<payload::receiver::StatusResponse>
+        let resp: Payload<payload::receiver::GetStatusResponse>
             = self.json_rpc(payload_req, DEFAULT_RECEIVER_ID.to_string()).await?;
 
-        Ok(resp.inner.status)
+        Ok(resp.inner.0.status)
     }
 
     #[named]
@@ -248,7 +280,9 @@ impl Client {
         let resp: Payload<payload::receiver::LaunchResponse>
             = self.json_rpc(payload_req, destination_id).await?;
 
-        let payload::receiver::LaunchResponse::OkStatus { status } = resp.inner else {
+        let payload::receiver::LaunchResponse::Ok(payload::receiver::Status { status })
+            = resp.inner else
+        {
             bail!("{METHOD_PATH}: error response:\n\
                    Launch response: {resp:#?}");
         };
@@ -281,7 +315,7 @@ impl Client {
         let resp: Payload<StopResponse>
             = self.json_rpc(payload_req, app_session.receiver_destination_id).await?;
 
-        let StopResponse::OkStatus { status } = resp.inner else {
+        let StopResponse::Ok(payload::receiver::Status { status }) = resp.inner else {
             bail!("{METHOD_PATH}: error response\n\
                    response: {resp:#?}");
         };
@@ -306,7 +340,7 @@ impl Client {
         let resp: Payload<SetVolumeResponse>
             = self.json_rpc(payload_req, destination_id).await?;
 
-        let SetVolumeResponse::OkStatus { status } = resp.inner else {
+        let SetVolumeResponse::Ok(payload::receiver::Status { status }) = resp.inner else {
             bail!("{METHOD_PATH}: error response\n\
                    response: {resp:#?}");
         };
@@ -329,7 +363,7 @@ impl Client {
     pub async fn media_status(&mut self,
                               app_session: AppSession,
                               media_session_id: Option<MediaSessionId>)
-    -> Result<payload::media::MediaStatus> {
+    -> Result<payload::media::Status> {
         let payload_req = payload::media::GetStatusRequest {
             media_session_id,
         };
@@ -337,7 +371,7 @@ impl Client {
         let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req, app_session.app_destination_id).await?;
 
-        let payload::media::GetStatusResponse::MediaStatus(media_status) = resp.inner else {
+        let payload::media::GetStatusResponse::Ok(media_status) = resp.inner else {
             bail!("{method_path}: Error response\n\
                    _ response = {resp:#?}",
                   method_path = method_path!("Client"));
@@ -356,7 +390,7 @@ impl Client {
     pub async fn media_load(&mut self,
                             app_session: AppSession,
                             load_args: LoadMediaArgs)
-    -> Result<payload::media::MediaStatus> {
+    -> Result<payload::media::Status> {
         let payload_req = payload::media::LoadRequest {
             session_id: app_session.session_id,
 
@@ -371,13 +405,21 @@ impl Client {
         let resp: Payload<payload::media::LoadResponse>
             = self.json_rpc(payload_req, app_session.app_destination_id.clone()).await?;
 
-        let payload::media::LoadResponse::MediaStatus(status) = resp.inner else {
+        let payload::media::LoadResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
                    _ response = {resp:#?}",
                   method_path = method_path!("Client"));
         };
 
         Ok(status)
+    }
+
+    pub fn listen_to_status(&self) -> StatusListener {
+        // TODO: Set up auto connect?
+
+        StatusListener {
+            receiver: self.shared.status_sender.subscribe(),
+        }
     }
 
     pub async fn close(mut self) -> Result<()> {
@@ -401,9 +443,11 @@ impl Client {
     }
 
     fn config(&self) -> &Config {
-        &self.config
+        &self.shared.config
     }
 
+    // TODO: Make this private? Used by current CLI to listen to status updates.
+    //       Could provide safer, higher level API for this use case.
     pub async fn connection_connect(&mut self, destination: EndpointId) -> Result<()> {
         let payload_req = payload::connection::ConnectRequest {
             user_agent: payload::USER_AGENT.to_string(),
@@ -506,7 +550,7 @@ impl Client {
         let sender = self.config().sender();
         let request_namespace = Req::CHANNEL_NAMESPACE.to_string();
 
-        tracing::debug!(target: method_path!("Client"),
+        tracing::debug!(target: METHOD_PATH,
                         ?payload,
                         request_id,
                         request_type = payload.typ,
@@ -516,7 +560,7 @@ impl Client {
 
         let payload_json = serde_json::to_string(&payload)?;
 
-        tracing::trace!(target: method_path!("Client"),
+        tracing::trace!(target: METHOD_PATH,
                         payload_json,
                         request_id,
                         request_type = payload.typ,
@@ -592,15 +636,15 @@ async fn tls_connect(config: &Config)
     let ip: IpAddr = addr.ip();
     let port: u16 = addr.port();
 
-    let mut config = rustls::ClientConfig::builder()
+    let mut tls_config = rustls::ClientConfig::builder()
         .dangerous().with_custom_certificate_verifier(Arc::new(
             crate::util::rustls::danger::NoCertificateVerification::new_ring()))
         .with_no_client_auth();
 
-    config.enable_early_data = true;
-    let config = Arc::new(config);
+    tls_config.enable_early_data = true;
+    let tls_config = Arc::new(tls_config);
 
-    let connector = tokio_rustls::TlsConnector::from(config);
+    let connector = tokio_rustls::TlsConnector::from(tls_config);
 
     let ip_rustls = rustls::pki_types::IpAddr::from(ip);
     let domain = rustls::pki_types::ServerName::IpAddress(ip_rustls);
@@ -636,7 +680,7 @@ impl<S: TokioAsyncStream> Task<S> {
     pub fn new(
         conn: S,
         task_cmd_rx: tokio::sync::mpsc::Receiver::<TaskCommand>,
-        config: Arc<Config>,
+        shared: Arc<Shared>,
     ) -> Task<S> {
         let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx);
 
@@ -657,7 +701,8 @@ impl<S: TokioAsyncStream> Task<S> {
 
             need_flush: false,
             requests_map: HashMap::new(),
-            config,
+
+            shared,
         }
     }
 
@@ -738,10 +783,11 @@ impl<S: TokioAsyncStream> Task<S> {
             Either::Right(futures::stream::empty())
         };
 
-        // poll_fn???
-
         // Streams polled in order with current implementation on first
         // poll of Merge.
+        //
+        // By assigning to a variable, these temporaries have their
+        // lifetime extended so `merge()` can use them.
         let streams = (
             &mut (conn_flush_stream.map(TaskEvent::Flush)),
             &mut (proj.task_cmd_rx.map(TaskEvent::Cmd)),
@@ -905,12 +951,14 @@ impl<S: TokioAsyncStream> Task<S> {
                                ?err,
                                "Message read error");
                 return;
-            }
+            },
             Ok(msg) => msg,
         };
 
+        let msg_time = Utc::now();
+
         tracing::trace!(target: METHOD_PATH,
-                        ?msg,
+                        ?msg, ?msg_time,
                         "message read");
 
         let msg_ns = msg.namespace.as_str();
@@ -967,7 +1015,7 @@ impl<S: TokioAsyncStream> Task<S> {
             tracing::debug!(target: METHOD_PATH,
                             ?msg, ?pd, pd_type,
                             "broadcast message");
-            // TODO: return to client through channel.
+            // TODO: return to client through channel?
         }
 
         // TODO: Split off special case handling.
@@ -978,10 +1026,10 @@ impl<S: TokioAsyncStream> Task<S> {
         if msg_ns == payload::connection::CHANNEL_NAMESPACE
             && pd.typ == payload::connection::MESSAGE_TYPE_CLOSE
         {
-            tracing::error!(target: METHOD_PATH,
+            tracing::warn!(target: METHOD_PATH,
                             ?msg, ?pd, pd_type,
                             "Connection closed message from destination.\n\n\
-                             This usually means we were never connected to the destination \
+                             This may mean we were never connected to the destination \
                              (try calling method Client::connection_connect()) or \
                              we sent an invalid request.");
             return;
@@ -993,6 +1041,20 @@ impl<S: TokioAsyncStream> Task<S> {
         {
             self.handle_read_ping(msg.source).await;
             return;
+        }
+
+        // Receiver status from remote; try to publish update to listeners.
+        if msg_ns == payload::receiver::CHANNEL_NAMESPACE
+            && pd.typ == payload::receiver::MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS
+        {
+            self.publish_receiver_status(&msg, &pd, msg_time);
+        }
+
+        // Media namespace status from remote; try to publish update to listeners.
+        if msg_ns == payload::media::CHANNEL_NAMESPACE
+            && pd.typ == payload::media::MESSAGE_RESPONSE_TYPE_MEDIA_STATUS
+        {
+            self.publish_media_status(&msg, &pd, msg_time);
         }
 
         let request_id = match pd.request_id {
@@ -1157,8 +1219,62 @@ impl<S: TokioAsyncStream> Task<S> {
         }
     }
 
+    #[named]
+    fn publish_receiver_status(&self,
+                               msg: &CastMessage, pd: &PayloadDyn, msg_time: DateTime<Utc>)
+    {
+        let pd_typed: Payload::<payload::receiver::GetStatusResponse> =
+            match serde_json::from_value(pd.inner.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::error!(target: method_path!("Task"),
+                                    ?pd, ?msg, ?err,
+                                    "error deserialising typed receiver status payload");
+                    return;
+                }
+            };
+
+        let update = StatusUpdate {
+            time: msg_time,
+            msg: StatusMessage::Receiver(pd_typed.inner.0),
+        };
+        self.publish_status_update(update);
+    }
+
+    #[named]
+    fn publish_media_status(&self,
+                               msg: &CastMessage, pd: &PayloadDyn, msg_time: DateTime<Utc>)
+    {
+        let pd_typed: Payload::<payload::media::Status> =
+            match serde_json::from_value(pd.inner.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::error!(target: method_path!("Task"),
+                                    ?pd, ?msg, ?err,
+                                    "error deserialising typed media status payload");
+                    return;
+                }
+            };
+
+        let update = StatusUpdate {
+            time: msg_time,
+            msg: StatusMessage::Media(pd_typed.inner),
+        };
+        self.publish_status_update(update);
+    }
+
+    #[named]
+    fn publish_status_update(&self, update: StatusUpdate) {
+        tracing::debug!(target: method_path!("Task"),
+                        ?update,
+                        "status update");
+
+        // Ignore an error result, which just means no receivers are currently listening.
+        let _ = self.shared.status_sender.send(update);
+    }
+
     fn config(&self) -> &Config {
-        &self.config
+        &self.shared.config
     }
 }
 
@@ -1304,5 +1420,15 @@ impl Config {
         self.sender.as_ref()
             .cloned()
             .unwrap_or_else(|| DEFAULT_SENDER_ID.to_string())
+    }
+}
+
+impl StatusListener {
+    pub async fn recv(&mut self) -> Result<StatusUpdate, broadcast::error::RecvError> {
+        self.receiver.recv().await
+    }
+
+    pub fn try_recv(&mut self) -> Result<StatusUpdate, broadcast::error::TryRecvError> {
+        self.receiver.try_recv()
     }
 }

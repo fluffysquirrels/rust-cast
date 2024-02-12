@@ -67,33 +67,61 @@ pub mod connection {
     }
 }
 
+pub mod heartbeat {
+    use super::*;
+
+    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.heartbeat";
+
+    pub const MESSAGE_TYPE_PING: MessageTypeConst = "PING";
+    pub const MESSAGE_TYPE_PONG: MessageTypeConst = "PONG";
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Ping {}
+
+    impl RequestInner for Ping {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PING;
+    }
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Pong {}
+
+    impl RequestInner for Pong {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PONG;
+    }
+}
+
 pub mod media {
     use super::*;
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.media";
 
-    const MESSAGE_REQUEST_TYPE_GET_STATUS: MessageTypeConst = "GET_STATUS";
-    const MESSAGE_REQUEST_TYPE_LOAD: MessageTypeConst = "LOAD";
-    const MESSAGE_REQUEST_TYPE_PLAY: MessageTypeConst = "PLAY";
-    const MESSAGE_REQUEST_TYPE_PAUSE: MessageTypeConst = "PAUSE";
-    const MESSAGE_REQUEST_TYPE_STOP: MessageTypeConst = "STOP";
-    const MESSAGE_REQUEST_TYPE_SEEK: MessageTypeConst = "SEEK";
-    const MESSAGE_REQUEST_TYPE_QUEUE_REMOVE: MessageTypeConst = "QUEUE_REMOVE";
-    const MESSAGE_REQUEST_TYPE_QUEUE_INSERT: MessageTypeConst = "QUEUE_INSERT";
-    const MESSAGE_REQUEST_TYPE_QUEUE_LOAD: MessageTypeConst = "QUEUE_LOAD";
-    const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
-    const MESSAGE_REQUEST_TYPE_QUEUE_PREV: MessageTypeConst = "QUEUE_PREV";
-    const MESSAGE_REQUEST_TYPE_QUEUE_NEXT: MessageTypeConst = "QUEUE_NEXT";
+    pub const MESSAGE_REQUEST_TYPE_GET_STATUS: MessageTypeConst = "GET_STATUS";
+    pub const MESSAGE_REQUEST_TYPE_LOAD: MessageTypeConst = "LOAD";
+    pub const MESSAGE_REQUEST_TYPE_PLAY: MessageTypeConst = "PLAY";
+    pub const MESSAGE_REQUEST_TYPE_PAUSE: MessageTypeConst = "PAUSE";
+    pub const MESSAGE_REQUEST_TYPE_STOP: MessageTypeConst = "STOP";
+    pub const MESSAGE_REQUEST_TYPE_SEEK: MessageTypeConst = "SEEK";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_REMOVE: MessageTypeConst = "QUEUE_REMOVE";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_INSERT: MessageTypeConst = "QUEUE_INSERT";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_LOAD: MessageTypeConst = "QUEUE_LOAD";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_PREV: MessageTypeConst = "QUEUE_PREV";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_NEXT: MessageTypeConst = "QUEUE_NEXT";
 
-    const MESSAGE_RESPONSE_TYPE_MEDIA_STATUS: MessageTypeConst = "MEDIA_STATUS";
-    const MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED: MessageTypeConst = "LOAD_CANCELLED";
-    const MESSAGE_RESPONSE_TYPE_LOAD_FAILED: MessageTypeConst = "LOAD_FAILED";
-    const MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE: MessageTypeConst = "INVALID_PLAYER_STATE";
-    const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageTypeConst = "INVALID_REQUEST";
+    pub const MESSAGE_RESPONSE_TYPE_MEDIA_STATUS: MessageTypeConst = "MEDIA_STATUS";
+    pub const MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED: MessageTypeConst = "LOAD_CANCELLED";
+    pub const MESSAGE_RESPONSE_TYPE_LOAD_FAILED: MessageTypeConst = "LOAD_FAILED";
+    pub const MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE: MessageTypeConst
+        = "INVALID_PLAYER_STATE";
+    pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageTypeConst = "INVALID_REQUEST";
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
-    pub struct MediaStatus {
+    pub struct Status {
         pub status: Vec<proxies::media::Status>,
     }
 
@@ -125,7 +153,7 @@ pub mod media {
             rename_all = "camelCase")]
     pub enum LoadResponse {
         #[serde(rename = "MEDIA_STATUS")]
-        MediaStatus(MediaStatus),
+        Ok(Status),
 
         #[serde(rename = "LOAD_CANCELLED")]
         LoadCancelled,
@@ -169,7 +197,7 @@ pub mod media {
             rename_all = "camelCase")]
     pub enum GetStatusResponse {
         #[serde(rename = "MEDIA_STATUS")]
-        MediaStatus(MediaStatus),
+        Ok(Status),
 
         #[serde(rename = "INVALID_REQUEST")]
         InvalidRequest { reason: String },
@@ -184,63 +212,40 @@ pub mod media {
     }
 }
 
-pub mod heartbeat {
-    use super::*;
-
-    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.heartbeat";
-
-    pub const MESSAGE_TYPE_PING: MessageTypeConst = "PING";
-    pub const MESSAGE_TYPE_PONG: MessageTypeConst = "PONG";
-
-    #[derive(Debug, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Ping {}
-
-    impl RequestInner for Ping {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PING;
-    }
-
-    #[derive(Debug, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Pong {}
-
-    impl RequestInner for Pong {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PONG;
-    }
-}
-
 pub mod receiver {
     use super::*;
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.receiver";
 
-    const MESSAGE_REQUEST_TYPE_LAUNCH: &str = "LAUNCH";
-    const MESSAGE_REQUEST_TYPE_STOP: &str = "STOP";
-    const MESSAGE_REQUEST_TYPE_GET_STATUS: &str = "GET_STATUS";
-    const MESSAGE_REQUEST_TYPE_SET_VOLUME: &str = "SET_VOLUME";
+    pub const MESSAGE_REQUEST_TYPE_LAUNCH: &str = "LAUNCH";
+    pub const MESSAGE_REQUEST_TYPE_STOP: &str = "STOP";
+    pub const MESSAGE_REQUEST_TYPE_GET_STATUS: &str = "GET_STATUS";
+    pub const MESSAGE_REQUEST_TYPE_SET_VOLUME: &str = "SET_VOLUME";
 
-    const MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS: &str = "RECEIVER_STATUS";
-    const MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
-    const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
+    pub const MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS: &str = "RECEIVER_STATUS";
+    pub const MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
+    pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Status {
+        pub status: proxies::receiver::Status,
+    }
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
-    pub struct StatusRequest {}
+    pub struct GetStatusRequest {}
 
-    impl RequestInner for StatusRequest {
+    impl RequestInner for GetStatusRequest {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = "GET_STATUS";
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_GET_STATUS;
     }
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
-    pub struct StatusResponse {
-        pub status: proxies::receiver::Status,
-    }
+    pub struct GetStatusResponse(pub Status);
 
-    impl ResponseInner for StatusResponse {
+    impl ResponseInner for GetStatusResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
         const TYPE_NAMES: &'static [MessageTypeConst] = &[MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS];
     }
@@ -264,9 +269,7 @@ pub mod receiver {
             rename_all = "camelCase")]
     pub enum LaunchResponse {
         #[serde(rename = "RECEIVER_STATUS")]
-        OkStatus {
-            status: proxies::receiver::Status,
-        },
+        Ok(Status),
 
         #[serde(rename = "LAUNCH_ERROR")]
         Error {
@@ -281,7 +284,6 @@ pub mod receiver {
 
     impl ResponseInner for LaunchResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        // const TYPE_NAME: MessageTypeConst = "RECEIVER_STATUS";
         const TYPE_NAMES: &'static [MessageTypeConst] = &[
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
             MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR,
@@ -307,9 +309,7 @@ pub mod receiver {
             rename_all = "camelCase")]
     pub enum StopResponse {
         #[serde(rename = "RECEIVER_STATUS")]
-        OkStatus {
-            status: proxies::receiver::Status,
-        },
+        Ok(Status),
 
         #[serde(rename = "INVALID_REQUEST")]
         InvalidRequest {
@@ -343,9 +343,7 @@ pub mod receiver {
             rename_all = "camelCase")]
     pub enum SetVolumeResponse {
         #[serde(rename = "RECEIVER_STATUS")]
-        OkStatus {
-            status: proxies::receiver::Status,
-        },
+        Ok(Status),
 
         #[serde(rename = "INVALID_REQUEST")]
         InvalidRequest {
