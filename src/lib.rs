@@ -8,9 +8,9 @@ pub mod async_client;
 pub mod cast;
 pub mod channels;
 pub mod errors;
-pub mod json_payload;
 mod message;
 pub mod message_manager;
+pub mod payload;
 mod types;
 mod utils;
 

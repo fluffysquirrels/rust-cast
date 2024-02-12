@@ -67,7 +67,7 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
     let receiver_status = client.receiver_status().await?;
     println!("receiver_status = {receiver_status:#?}");
 
-    let media_ns = AppNamespace::from(lib::json_payload::media::CHANNEL_NAMESPACE);
+    let media_ns = AppNamespace::from(lib::payload::media::CHANNEL_NAMESPACE);
 
     if let Some(media_app) =
         receiver_status.applications.iter().find(

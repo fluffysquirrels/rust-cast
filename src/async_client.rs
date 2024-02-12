@@ -2,11 +2,11 @@ use anyhow::{bail, format_err};
 use bytes::{Buf, BufMut, BytesMut};
 use crate::{
     cast::proxies,
-    json_payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner},
     message::{
         CastMessage,
         CastMessagePayload,
     },
+    payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner},
     types::{AppId, /* AppIdConst, */
             AppSession,
             EndpointId, EndpointIdConst, ENDPOINT_BROADCAST,
@@ -177,10 +177,10 @@ const DATA_BUFFER_LEN: usize = 64 * 1024;
 
 static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<NamespaceConst>>::new(|| {
     HashSet::from([
-        json_payload::connection::CHANNEL_NAMESPACE,
-        json_payload::heartbeat::CHANNEL_NAMESPACE,
-        json_payload::media::CHANNEL_NAMESPACE,
-        json_payload::receiver::CHANNEL_NAMESPACE,
+        payload::connection::CHANNEL_NAMESPACE,
+        payload::heartbeat::CHANNEL_NAMESPACE,
+        payload::media::CHANNEL_NAMESPACE,
+        payload::receiver::CHANNEL_NAMESPACE,
     ])
 });
 
@@ -227,9 +227,9 @@ impl Config {
 
 impl Client {
     pub async fn receiver_status(&mut self) -> Result<proxies::receiver::Status> {
-        let payload_req = json_payload::receiver::StatusRequest {};
+        let payload_req = payload::receiver::StatusRequest {};
 
-        let resp: Payload<json_payload::receiver::StatusResponse>
+        let resp: Payload<payload::receiver::StatusResponse>
             = self.json_rpc(payload_req, DEFAULT_RECEIVER_ID.to_string()).await?;
 
         Ok(resp.inner.status)
@@ -241,14 +241,14 @@ impl Client {
     {
         const METHOD_PATH: &str = method_path!("Client");
 
-        let payload_req = json_payload::receiver::LaunchRequest {
+        let payload_req = payload::receiver::LaunchRequest {
             app_id: app_id.clone(),
         };
 
-        let resp: Payload<json_payload::receiver::LaunchResponse>
+        let resp: Payload<payload::receiver::LaunchResponse>
             = self.json_rpc(payload_req, destination_id).await?;
 
-        let json_payload::receiver::LaunchResponse::OkStatus { status } = resp.inner else {
+        let payload::receiver::LaunchResponse::OkStatus { status } = resp.inner else {
             bail!("{METHOD_PATH}: error response:\n\
                    Launch response: {resp:#?}");
         };
@@ -270,7 +270,7 @@ impl Client {
     pub async fn receiver_stop_app(&mut self, app_session: AppSession)
     -> Result<proxies::receiver::Status>
     {
-        use json_payload::receiver::{StopRequest, StopResponse};
+        use payload::receiver::{StopRequest, StopResponse};
 
         const METHOD_PATH: &str = method_path!("Client");
 
@@ -295,7 +295,7 @@ impl Client {
                                      volume: proxies::receiver::Volume)
     -> Result<proxies::receiver::Status>
     {
-        use json_payload::receiver::{SetVolumeRequest, SetVolumeResponse};
+        use payload::receiver::{SetVolumeRequest, SetVolumeResponse};
 
         const METHOD_PATH: &str = method_path!("Client");
 
@@ -329,15 +329,15 @@ impl Client {
     pub async fn media_status(&mut self,
                               app_session: AppSession,
                               media_session_id: Option<MediaSessionId>)
-    -> Result<json_payload::media::MediaStatus> {
-        let payload_req = json_payload::media::GetStatusRequest {
+    -> Result<payload::media::MediaStatus> {
+        let payload_req = payload::media::GetStatusRequest {
             media_session_id,
         };
 
-        let resp: Payload<json_payload::media::GetStatusResponse>
+        let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req, app_session.app_destination_id).await?;
 
-        let json_payload::media::GetStatusResponse::MediaStatus(media_status) = resp.inner else {
+        let payload::media::GetStatusResponse::MediaStatus(media_status) = resp.inner else {
             bail!("{method_path}: Error response\n\
                    _ response = {resp:#?}",
                   method_path = method_path!("Client"));
@@ -356,8 +356,8 @@ impl Client {
     pub async fn media_load(&mut self,
                             app_session: AppSession,
                             load_args: LoadMediaArgs)
-    -> Result<json_payload::media::MediaStatus> {
-        let payload_req = json_payload::media::LoadRequest {
+    -> Result<payload::media::MediaStatus> {
+        let payload_req = payload::media::LoadRequest {
             session_id: app_session.session_id,
 
             media: load_args.media,
@@ -368,10 +368,10 @@ impl Client {
             preload_time: load_args.preload_time.unwrap_or(10_f64),
         };
 
-        let resp: Payload<json_payload::media::LoadResponse>
+        let resp: Payload<payload::media::LoadResponse>
             = self.json_rpc(payload_req, app_session.app_destination_id.clone()).await?;
 
-        let json_payload::media::LoadResponse::MediaStatus(status) = resp.inner else {
+        let payload::media::LoadResponse::MediaStatus(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
                    _ response = {resp:#?}",
                   method_path = method_path!("Client"));
@@ -405,8 +405,8 @@ impl Client {
     }
 
     pub async fn connection_connect(&mut self, destination: EndpointId) -> Result<()> {
-        let payload_req = json_payload::connection::ConnectRequest {
-            user_agent: json_payload::USER_AGENT.to_string(),
+        let payload_req = payload::connection::ConnectRequest {
+            user_agent: payload::USER_AGENT.to_string(),
         };
         self.json_send(payload_req, destination).await?;
         Ok(())
@@ -975,8 +975,8 @@ impl<S: TokioAsyncStream> Task<S> {
         // # Special message cases
 
         // Channel close
-        if msg_ns == json_payload::connection::CHANNEL_NAMESPACE
-            && pd.typ == json_payload::connection::MESSAGE_TYPE_CLOSE
+        if msg_ns == payload::connection::CHANNEL_NAMESPACE
+            && pd.typ == payload::connection::MESSAGE_TYPE_CLOSE
         {
             tracing::error!(target: METHOD_PATH,
                             ?msg, ?pd, pd_type,
@@ -988,8 +988,8 @@ impl<S: TokioAsyncStream> Task<S> {
         }
 
         // Heartbeat ping from remote; reply with a pong.
-        if msg_ns == json_payload::heartbeat::CHANNEL_NAMESPACE
-            && pd.typ == json_payload::heartbeat::MESSAGE_TYPE_PING
+        if msg_ns == payload::heartbeat::CHANNEL_NAMESPACE
+            && pd.typ == payload::heartbeat::MESSAGE_TYPE_PING
         {
             self.handle_read_ping(msg.source).await;
             return;
@@ -1088,10 +1088,10 @@ impl<S: TokioAsyncStream> Task<S> {
     #[named]
     async fn handle_read_ping(mut self: Pin<&mut Self>, destination: EndpointId) {
         let source = self.as_mut().config().sender();
-        let pong_pd = Payload::<json_payload::heartbeat::Pong> {
+        let pong_pd = Payload::<payload::heartbeat::Pong> {
             request_id: None,
-            typ: json_payload::heartbeat::MESSAGE_TYPE_PONG.into(),
-            inner: json_payload::heartbeat::Pong {},
+            typ: payload::heartbeat::MESSAGE_TYPE_PONG.into(),
+            inner: payload::heartbeat::Pong {},
         };
         tracing::debug!(target: method_path!("Task"),
                         ?pong_pd,
@@ -1111,7 +1111,7 @@ impl<S: TokioAsyncStream> Task<S> {
         };
 
         let pong_msg = CastMessage {
-            namespace: json_payload::heartbeat::CHANNEL_NAMESPACE.into(),
+            namespace: payload::heartbeat::CHANNEL_NAMESPACE.into(),
             source, destination,
             payload: pong_pd_json.into(),
         };
