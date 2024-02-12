@@ -10,7 +10,7 @@ use chromecast_tokio::{
 };
 use clap::Parser;
 use futures::StreamExt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use tokio::{
     io::AsyncReadExt,
     pin,
@@ -20,17 +20,35 @@ use tokio::{
 struct Args {
     #[command(subcommand)]
     command: Command,
+
+    // TODO: mdns.
+
+    #[arg(long = "ip", conflicts_with = "target")]
+    target_ip: Option<IpAddr>,
+
+    #[arg(long = "port", default_value_t = 8009)]
+    target_port: u16,
+
+    #[arg(long, conflicts_with = "target_ip")]
+    target: Option<SocketAddr>,
 }
 
 #[derive(clap::Subcommand, Clone, Debug)]
 enum Command {
-    Demo,
+    AppStop,
+    Demo(DemoArgs),
     Heartbeat,
     Pause,
     Play,
     SetVolume(SetVolumeArgs),
     Status(StatusArgs),
     Stop,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct DemoArgs {
+    #[arg(long)]
+    no_stop: bool,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -54,15 +72,24 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    let addr: SocketAddr =
+        if let Some(sa) = args.target { sa }
+        else if let Some(ip) = args.target_ip {
+            SocketAddr::from((ip, args.target_port))
+        } else {
+            bail!("Exactly one of the arguments `--ip` or `--target` is required.");
+        };
+
     // TODO: mdns service discovery
     let config = client::Config {
-        addr: SocketAddr::from(([192, 168, 0, 144], 8009)),
+        addr,
         sender: None, // Use default
     };
     let client = config.connect().await?;
 
     match args.command {
-        Command::Demo => demo_main(client).await?,
+        Command::AppStop => app_stop_main(client).await?,
+        Command::Demo(sub_args) => demo_main(client, sub_args).await?,
         Command::Heartbeat => heartbeat_main(client).await?,
         Command::Pause => media_pause_main(client).await?,
         Command::Play => media_play_main(client).await?,
@@ -130,6 +157,26 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
 
     client.close().await?;
 
+    Ok(())
+}
+
+async fn app_stop_main(mut client: Client) -> Result<()> {
+    let initial_status = client.receiver_status().await?;
+
+    println!("initial_status = {initial_status:#?}");
+
+    let Some(app) = initial_status.applications.first() else {
+        bail!("Receiver has no apps\n\
+               _ status = {initial_status:#?}");
+    };
+
+    let app_session = app.to_app_session(RECEIVER_ID.into())?;
+
+    let stop_status = client.receiver_stop_app(app_session).await?;
+
+    println!("stop_status = {stop_status:#?}");
+
+    client.close().await?;
     Ok(())
 }
 
@@ -215,7 +262,7 @@ async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
     })
 }
 
-async fn demo_main(mut client: Client) -> Result<()> {
+async fn demo_main(mut client: Client, sub_args: DemoArgs) -> Result<()> {
     let status = client.receiver_status().await?;
     println!("status = {status:#?}");
 
@@ -257,13 +304,15 @@ async fn demo_main(mut client: Client) -> Result<()> {
 
     sleep(std::time::Duration::from_secs(2)).await;
 
-    let stop_res = client.receiver_stop_app(app_session.clone()).await?;
-    println!("stop_res = {stop_res:#?}");
+    if !sub_args.no_stop {
+        let stop_res = client.receiver_stop_app(app_session.clone()).await?;
+        println!("stop_res = {stop_res:#?}");
 
-    sleep(std::time::Duration::from_secs(1)).await;
+        sleep(std::time::Duration::from_secs(1)).await;
 
-    let receiver_status_2 = client.receiver_status().await?;
-    println!("receiver_status_2 = {receiver_status_2:#?}");
+        let receiver_status_2 = client.receiver_status().await?;
+        println!("receiver_status_2 = {receiver_status_2:#?}");
+    }
 
     client.close().await?;
     Ok(())

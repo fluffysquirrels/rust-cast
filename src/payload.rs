@@ -120,7 +120,7 @@ pub mod media {
         = "INVALID_PLAYER_STATE";
     pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageTypeConst = "INVALID_REQUEST";
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Status {
         pub status: Vec<proxies::media::Status>,

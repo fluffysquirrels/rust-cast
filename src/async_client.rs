@@ -191,6 +191,7 @@ pub struct StatusUpdate {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum StatusMessage {
+    // TODO: Implement this.
     Disconnect,
     Media(payload::media::Status),
     Receiver(payload::receiver::Status),
