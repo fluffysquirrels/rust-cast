@@ -11,7 +11,7 @@ pub mod errors;
 mod message;
 pub mod message_manager;
 pub mod payload;
-mod types;
+pub mod types;
 mod utils;
 
 // use std::{borrow::Cow, net::TcpStream, sync::Arc};

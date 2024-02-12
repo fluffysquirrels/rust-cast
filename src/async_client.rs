@@ -2,16 +2,17 @@ use anyhow::{bail, format_err};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Utc};
 use crate::{
-    cast::proxies,
+    cast::proxies::{self, media::CustomData},
     message::{
         CastMessage,
         CastMessagePayload,
     },
-    payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner},
+    payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner,
+              media::MediaRequestCommon},
     types::{AppId, /* AppIdConst, */
             AppSession,
             EndpointId, EndpointIdConst, ENDPOINT_BROADCAST,
-            /* MediaSession, MediaSessionId, */
+            MediaSession, /* MediaSessionId, */
             MediaSessionId,
             /* MessageType, */ MessageTypeConst,
             /* Namespace, */ NamespaceConst,
@@ -397,7 +398,7 @@ impl Client {
             media: load_args.media,
 
             current_time: load_args.current_time,
-            custom_data: serde_json::Value::Null,
+            custom_data: CustomData::default(),
             autoplay: load_args.autoplay,
             preload_time: load_args.preload_time.unwrap_or(10_f64),
         };
@@ -413,6 +414,55 @@ impl Client {
 
         Ok(status)
     }
+
+    pub async fn media_play(&mut self,
+                            media_session: MediaSession)
+    -> Result<payload::media::Status> {
+        self.simple_media_request(media_session, payload::media::PlayRequest).await
+    }
+
+    pub async fn media_pause(&mut self,
+                             media_session: MediaSession)
+    -> Result<payload::media::Status> {
+        self.simple_media_request(media_session, payload::media::PauseRequest).await
+    }
+
+    pub async fn media_stop(&mut self,
+                            media_session: MediaSession)
+    -> Result<payload::media::Status> {
+        self.simple_media_request(media_session, payload::media::StopRequest).await
+    }
+
+    #[named]
+    async fn simple_media_request<Req>(
+        &mut self,
+        media_session: MediaSession,
+        msg_type_fn: fn(MediaRequestCommon) -> Req)
+    -> Result<payload::media::Status>
+    where Req: payload::RequestInner
+    {
+        let payload_req = msg_type_fn(MediaRequestCommon {
+            custom_data: CustomData::default(),
+            media_session_id: media_session.media_session_id,
+        });
+
+        let resp: Payload<payload::media::GetStatusResponse>
+            = self.json_rpc(payload_req,
+                            media_session.app_session.app_destination_id.clone()).await?;
+
+        let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response         = {resp:#?}\n\
+                   _ request_msg_type = {req_msg_type}\n\
+                   _ media_session    = {media_session:#?}",
+                  method_path = method_path!("Client"),
+                  req_msg_type = Req::TYPE_NAME);
+        };
+
+        Ok(status)
+    }
+
+
 
     pub fn listen_to_status(&self) -> StatusListener {
         // TODO: Set up auto connect?

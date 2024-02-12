@@ -95,6 +95,7 @@ pub mod heartbeat {
 }
 
 pub mod media {
+    use proxies::media::CustomData;
     use super::*;
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.media";
@@ -125,10 +126,16 @@ pub mod media {
         pub status: Vec<proxies::media::Status>,
     }
 
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct MediaRequestCommon {
+        pub custom_data: CustomData,
+        pub media_session_id: MediaSessionId,
+    }
 
 
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct LoadRequest {
         pub session_id: SessionId,
@@ -137,7 +144,7 @@ pub mod media {
         pub current_time: f64,
 
         #[serde(default)]
-        pub custom_data: serde_json::Value,
+        pub custom_data: CustomData,
         pub autoplay: bool,
         pub preload_time: f64,
     }
@@ -148,7 +155,7 @@ pub mod media {
     }
 
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Deserialize)]
     #[serde(tag = "type",
             rename_all = "camelCase")]
     pub enum LoadResponse {
@@ -181,7 +188,7 @@ pub mod media {
 
 
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct GetStatusRequest {
         pub media_session_id: Option<MediaSessionId>,
@@ -192,12 +199,15 @@ pub mod media {
         const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_GET_STATUS;
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Deserialize)]
     #[serde(tag = "type",
             rename_all = "camelCase")]
     pub enum GetStatusResponse {
         #[serde(rename = "MEDIA_STATUS")]
         Ok(Status),
+
+        #[serde(rename = "INVALID_PLAYER_STATE")]
+        InvalidPlayerState,
 
         #[serde(rename = "INVALID_REQUEST")]
         InvalidRequest { reason: String },
@@ -207,9 +217,28 @@ pub mod media {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
         const TYPE_NAMES: &'static [MessageTypeConst] = &[
             MESSAGE_RESPONSE_TYPE_MEDIA_STATUS,
+            MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
     }
+
+
+
+    macro_rules! simple_media_request {
+        ($name: ident, $msg_type_name: path) => {
+            #[derive(Debug, Serialize)]
+            pub struct $name(pub MediaRequestCommon);
+
+            impl RequestInner for $name {
+                const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+                const TYPE_NAME: MessageTypeConst = $msg_type_name;
+            }
+        };
+    }
+
+    simple_media_request!(PlayRequest,  MESSAGE_REQUEST_TYPE_PLAY);
+    simple_media_request!(PauseRequest, MESSAGE_REQUEST_TYPE_PAUSE);
+    simple_media_request!(StopRequest,  MESSAGE_REQUEST_TYPE_STOP);
 }
 
 pub mod receiver {

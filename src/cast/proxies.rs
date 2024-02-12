@@ -336,7 +336,6 @@ pub mod media {
     pub struct Status {
         pub media_session_id: i32,
 
-        #[serde(default)]
         pub media: Option<Media>,
 
         pub playback_rate: f32,

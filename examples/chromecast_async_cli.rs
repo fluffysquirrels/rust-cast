@@ -5,7 +5,8 @@ use chromecast_tokio::{
                    LoadMediaArgs,
                    DEFAULT_RECEIVER_ID as RECEIVER_ID},
     cast::proxies::{self, media::CustomData, receiver::AppNamespace},
-//     function_path, named,
+    types::MediaSession,
+    function_path, named,
 };
 use clap::Parser;
 use futures::StreamExt;
@@ -25,8 +26,11 @@ struct Args {
 enum Command {
     Demo,
     Heartbeat,
+    Pause,
+    Play,
     SetVolume(SetVolumeArgs),
     Status(StatusArgs),
+    Stop,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -60,9 +64,12 @@ async fn main() -> Result<()> {
     match args.command {
         Command::Demo => demo_main(client).await?,
         Command::Heartbeat => heartbeat_main(client).await?,
+        Command::Pause => media_pause_main(client).await?,
+        Command::Play => media_play_main(client).await?,
         Command::SetVolume(sub_args) => set_volume_main(client, sub_args).await?,
         Command::Status(sub_args) => status_main(client, sub_args).await?,
-    }
+        Command::Stop => media_stop_main(client).await?,
+    };
 
     Ok(())
 }
@@ -146,6 +153,66 @@ async fn set_volume_main(mut client: Client, sub_args: SetVolumeArgs) -> Result<
     client.close().await?;
 
     Ok(())
+}
+
+async fn media_pause_main(mut client: Client) -> Result<()> {
+    let media_session = get_media_session(&mut client).await?;
+    let media_status = client.media_pause(media_session).await?;
+    println!("media_status = {media_status:#?}");
+    client.close().await?;
+    Ok(())
+}
+
+async fn media_play_main(mut client: Client) -> Result<()> {
+    let media_session = get_media_session(&mut client).await?;
+    let media_status = client.media_play(media_session).await?;
+    println!("media_status = {media_status:#?}");
+    client.close().await?;
+    Ok(())
+}
+
+async fn media_stop_main(mut client: Client) -> Result<()> {
+    let media_session = get_media_session(&mut client).await?;
+    let media_status = client.media_stop(media_session).await?;
+    println!("media_status = {media_status:#?}");
+    client.close().await?;
+    Ok(())
+}
+
+#[named]
+async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
+    const FUNCTION_PATH: &str = function_path!();
+
+    let receiver_status = client.receiver_status().await?;
+
+    let media_ns = AppNamespace::from(lib::payload::media::CHANNEL_NAMESPACE);
+
+    let Some(media_app)
+        = receiver_status.applications.iter()
+            .find(|app| app.namespaces.contains(&media_ns)) else
+    {
+        bail!("{FUNCTION_PATH}: No media app found.\n\
+               _ receiver_status = {receiver_status:#?}");
+    };
+
+    let app_session = media_app.to_app_session(RECEIVER_ID.to_string())?;
+    client.connection_connect(app_session.app_destination_id.clone()).await?;
+
+    let media_status = client.media_status(app_session.clone(),
+                                           /* media_session_id: */ None).await?;
+
+    let Some(media_session_id) =
+        media_status.status.first()
+            .map(|s| s.media_session_id) else
+    {
+        bail!("{FUNCTION_PATH}: No media status entry\n\
+               _ receiver_status = {media_status:#?}");
+    };
+
+    Ok(MediaSession {
+        app_session,
+        media_session_id,
+    })
 }
 
 async fn demo_main(mut client: Client) -> Result<()> {
