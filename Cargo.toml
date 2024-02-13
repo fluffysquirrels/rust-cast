@@ -1,13 +1,13 @@
 [package]
-name = "chromecast-tokio"
+name = "rust_cast"
 description = "Communicate asynchronously with Google Cast enabled devices (e.g. Chromecast)."
-# documentation = "https://docs.rs/crate/rust_cast/"
-# homepage = "https://github.com/azasypkin/rust-cast"
-# repository = "https://github.com/tsirysndr/rust-cast"
+documentation = "https://docs.rs/crate/rust_cast/"
+homepage = "https://github.com/azasypkin/rust-cast"
+repository = "https://github.com/azasypkin/rust-cast"
 license = "MIT"
 keywords = ["cast", "chromecast", "google", "tokio", "async"]
-version = "0.18.2"
-# authors = ["Aleh Zasypkin <aleh.zasypkin@gmail.com>"]
+version = "0.19.0"
+authors = ["Aleh Zasypkin <aleh.zasypkin@gmail.com>"]
 categories = ["api-bindings", "hardware-support", "multimedia"]
 edition = "2021"
 exclude = [
