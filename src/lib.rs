@@ -4,6 +4,8 @@
 mod util;
 pub use util::named;
 
+#[cfg(feature = "clap")]
+pub mod args;
 pub mod async_client;
 pub mod cast;
 pub mod channels;

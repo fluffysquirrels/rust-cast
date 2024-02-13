@@ -10,7 +10,6 @@ use chromecast_tokio::{
 };
 use clap::Parser;
 use futures::StreamExt;
-use std::net::{IpAddr, SocketAddr};
 use tokio::{
     io::AsyncReadExt,
     pin,
@@ -21,17 +20,8 @@ struct Args {
     #[command(subcommand)]
     command: Command,
 
-    // TODO: mdns.
-    // TODO: offer clap args in the lib, perhaps behind a feature flag.
-
-    #[arg(long = "ip", conflicts_with = "target")]
-    target_ip: Option<IpAddr>,
-
-    #[arg(long = "port", default_value_t = client::DEFAULT_PORT)]
-    target_port: u16,
-
-    #[arg(long, conflicts_with = "target_ip")]
-    target: Option<SocketAddr>,
+    #[clap(flatten)]
+    target: lib::args::TargetArgs,
 }
 
 #[derive(clap::Subcommand, Clone, Debug)]
@@ -74,13 +64,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // TODO: mdns service discovery
-    let addr: SocketAddr =
-        if let Some(sa) = args.target { sa }
-        else if let Some(ip) = args.target_ip {
-            SocketAddr::from((ip, args.target_port))
-        } else {
-            bail!("Exactly one of the arguments `--ip` or `--target` is required.");
-        };
+    let addr = args.target.to_direct_socket_addr()?;
 
     let config = client::Config {
         addr,

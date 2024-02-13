@@ -24,12 +24,14 @@ path = "examples/rust_caster.rs"
 [[example]]
 name = "chromecast-async-cli"
 path = "examples/chromecast_async_cli.rs"
+required-features = ["clap"]
 
 [dependencies]
 anyhow = "1.0.79"
 byteorder = "1.4.3"
 bytes = "1.5.0"
 chrono = "0.4.34"
+clap = { optional = true, version = "4.5.0", features = ["derive"] }
 function_name = "0.3.0"
 futures = "0.3.30"
 futures-concurrency = "7.4.3"
@@ -54,7 +56,6 @@ webpki-roots = "0.22.6"
 
 [dev-dependencies]
 ansi_term = "0.12.1"
-clap = { version = "4.5.0", features = ["derive"] }
 docopt = "1.1.1"
 env_logger = "0.10.0"
 
@@ -65,5 +66,6 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter", "json", "ti
 protobuf-codegen = "=3.2.0"
 
 [features]
-default = ["thread_safe"]
+default = ["clap", "thread_safe"]
+clap = ["dep:clap"]
 thread_safe = []
