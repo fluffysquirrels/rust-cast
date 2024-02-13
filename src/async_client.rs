@@ -191,10 +191,27 @@ pub struct StatusUpdate {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum StatusMessage {
-    // TODO: Implement this.
+    // TODO: Implement this. Or merge with `Self::Error` variant?
     Disconnect,
+
+    // TODO: Implement this.
+    Error(ErrorStatus),
+
+    // TODO: Implement this.
+    HeartbeatPingSent,
+    // TODO: Implement this.
+    HeartbeatPongSent,
+
     Media(payload::media::Status),
     Receiver(payload::receiver::Status),
+}
+
+pub struct ErrorStatus {
+    // TODO: Implement this.
+
+    // pub io_error_kind: Option<std::io::ErrorKind>,
+
+    // pub connected: bool,
 }
 
 /// Duration for the Task to do something locally. (Probably a bit high).
@@ -205,6 +222,12 @@ const LOCAL_TASK_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::fro
 const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(5_000);
 
 const DATA_BUFFER_LEN: usize = 64 * 1024;
+
+const TASK_CMD_CHANNEL_CAPACITY: usize = 16;
+
+const STATUS_BROADCAST_CHANNEL_CAPACITY: usize = 16;
+
+const TASK_DELAY_QUEUE_CAPACITY: usize = 4;
 
 static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<NamespaceConst>>::new(|| {
     HashSet::from([
@@ -233,11 +256,11 @@ impl Config {
     pub async fn connect(self) -> Result<Client> {
         let conn = tls_connect(&self).await?;
 
-        let (task_cmd_tx, task_cmd_rx) = tokio::sync::mpsc::channel(/* buffer: */ 32);
+        let (task_cmd_tx, task_cmd_rx) = tokio::sync::mpsc::channel(TASK_CMD_CHANNEL_CAPACITY);
 
         let shared = Arc::new(Shared {
             config: self,
-            status_sender: broadcast::Sender::new(/* buffer capacity: */ 8),
+            status_sender: broadcast::Sender::new(STATUS_BROADCAST_CHANNEL_CAPACITY),
         });
 
         let task = Task::new(conn, task_cmd_rx, Arc::clone(&shared));
@@ -262,6 +285,12 @@ impl Config {
 }
 
 impl Client {
+    pub async fn reconnect(&mut self) -> Result<()> {
+        todo(
+            "Use a new private variant of Config::connect that re-uses existing status_sender\n\
+             then mem::replace(self, new)");
+    }
+
     pub async fn receiver_status(&mut self) -> Result<proxies::receiver::Status> {
         let payload_req = payload::receiver::GetStatusRequest {};
 
@@ -466,7 +495,7 @@ impl Client {
     }
 
     pub fn listen_to_status(&self) -> StatusListener {
-        // TODO: Set up auto connect?
+        // TODO: Set up auto connect for the media app?
 
         StatusListener {
             receiver: self.shared.status_sender.subscribe(),
@@ -493,7 +522,7 @@ impl Client {
         Ok(())
     }
 
-    fn config(&self) -> &Config {
+    pub fn config(&self) -> &Config {
         &self.shared.config
     }
 
@@ -736,7 +765,7 @@ impl<S: TokioAsyncStream> Task<S> {
     ) -> Task<S> {
         let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx);
 
-        let timeout_queue = DelayQueue::<RequestId>::with_capacity(4);
+        let timeout_queue = DelayQueue::<RequestId>::with_capacity(TASK_DELAY_QUEUE_CAPACITY);
 
         let cast_message_codec = CastMessageCodec;
         let conn_framed = tokio_util::codec::Framed::with_capacity(

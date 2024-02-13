@@ -16,6 +16,9 @@ pub struct TargetArgs {
 }
 
 impl TargetArgs {
+    /// If a socket address was specified directly, calculate and return it.
+    ///
+    /// Does not resolve targets specified with mDNS.
     pub fn to_direct_socket_addr(&self) -> Result<SocketAddr> {
         let addr: SocketAddr =
             if let Some(sa) = self.target { sa }
