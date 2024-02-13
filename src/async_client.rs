@@ -227,6 +227,8 @@ pub mod app {
     pub const YOUTUBE: AppIdConst = "233637DE";
 }
 
+pub const DEFAULT_PORT: u16 = 8009;
+
 impl Config {
     pub async fn connect(self) -> Result<Client> {
         let conn = tls_connect(&self).await?;
@@ -463,8 +465,6 @@ impl Client {
         Ok(status)
     }
 
-
-
     pub fn listen_to_status(&self) -> StatusListener {
         // TODO: Set up auto connect?
 
@@ -514,6 +514,7 @@ impl Client {
         let namespace = Resp::CHANNEL_NAMESPACE;
         let expected_types = Resp::TYPE_NAMES;
 
+        // TODO: Why did I disable this?
         if false && !expected_types.contains(&payload_dyn.typ.as_str()) {
             bail!("Unexpected type in response payload\n\
                    request_id:     {rid:?}\n\
