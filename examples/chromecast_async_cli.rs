@@ -1,5 +1,7 @@
 use anyhow::bail;
-use chromecast_tokio::{
+use clap::Parser;
+use futures::StreamExt;
+use rust_cast::{
     self as lib,
     async_client::{self as client, Client, /* Error, */ Result,
                    LoadMediaArgs,
@@ -8,8 +10,6 @@ use chromecast_tokio::{
     types::MediaSession,
     function_path, named,
 };
-use clap::Parser;
-use futures::StreamExt;
 use tokio::{
     io::AsyncReadExt,
     pin,
@@ -106,18 +106,6 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
         let listener = client.listen_to_status();
 
         pin! {
-            let listen_stream = futures::stream::unfold(
-                listener, |mut l: client::StatusListener| async move {
-                    match l.recv().await {
-                        Ok(update) => Some((update, l)),
-
-                        // Err means no more broadcast::Sender's are left to send events,
-                        // i.e. the `Client` has been dropped.
-                        //
-                        // Return that the stream has terminated.
-                        Err(_) => None,
-                    }
-                });
             let cancel_stream = futures::stream::once(pause());
         };
 
@@ -128,7 +116,7 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
         }
 
         let mut merged = futures_concurrency::stream::Merge::merge((
-            listen_stream.map(Event::Update),
+            listener.map(Event::Update),
             cancel_stream.map(|_| Event::UserExit),
         ));
 

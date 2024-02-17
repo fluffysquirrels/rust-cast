@@ -190,40 +190,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
-name = "chromecast-tokio"
-version = "0.18.2"
-dependencies = [
- "ansi_term",
- "anyhow",
- "byteorder",
- "bytes",
- "chrono",
- "clap",
- "docopt",
- "env_logger",
- "function_name",
- "futures",
- "futures-concurrency",
- "log",
- "once_cell",
- "pin-project-lite",
- "protobuf",
- "protobuf-codegen",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-bunyan-formatter",
- "tracing-subscriber",
- "valuable",
- "webpki-roots",
-]
-
-[[package]]
 name = "chrono"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -945,6 +911,40 @@ dependencies = [
  "spin 0.9.8",
  "untrusted 0.9.0",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "rust_cast"
+version = "0.19.0"
+dependencies = [
+ "ansi_term",
+ "anyhow",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "clap",
+ "docopt",
+ "env_logger",
+ "function_name",
+ "futures",
+ "futures-concurrency",
+ "log",
+ "once_cell",
+ "pin-project-lite",
+ "protobuf",
+ "protobuf-codegen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-bunyan-formatter",
+ "tracing-subscriber",
+ "valuable",
+ "webpki-roots",
 ]
 
 [[package]]

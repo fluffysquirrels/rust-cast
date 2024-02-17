@@ -20,7 +20,8 @@ use crate::{
     util::named,
 };
 use futures::{
-    future::Either, SinkExt, StreamExt,
+    future::Either,
+    Future, SinkExt, Stream, StreamExt,
     stream::{SplitSink, SplitStream},
 };
 use once_cell::sync::Lazy;
@@ -33,11 +34,12 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{Arc, atomic::{AtomicI32, AtomicUsize, Ordering}},
+    task::{Context, Poll},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     pin,
-    sync::broadcast,
+    sync::{broadcast, mpsc},
 };
 use tokio_util::{
     codec::{self, Framed},
@@ -52,7 +54,7 @@ pub struct Client {
     /// Some(_) until `.close()` is called.
     task_join_handle: Option<tokio::task::JoinHandle<Result<()>>>,
 
-    task_cmd_tx: tokio::sync::mpsc::Sender::<TaskCommand>,
+    task_cmd_tx: mpsc::Sender::<TaskCmd>,
 
     next_request_id: AtomicI32,
     next_command_id: AtomicUsize,
@@ -102,7 +104,7 @@ pin_project! {
         conn_framed_stream: SplitStream<Framed<S, CastMessageCodec>>,
 
         #[pin]
-        task_cmd_rx: tokio_stream::wrappers::ReceiverStream::<TaskCommand>,
+        task_cmd_rx: tokio_stream::wrappers::ReceiverStream::<TaskCmd>,
 
         #[pin]
         timeout_queue: DelayQueue<RequestId>,
@@ -123,23 +125,23 @@ struct RequestState {
     #[allow(dead_code)] // Just for debugging for now.
     deadline: tokio::time::Instant,
 
-    result_sender: TaskCommandResultSender,
+    result_sender: TaskCmdResultSender,
 }
 
 #[derive(Debug)]
-struct TaskCommandResultSender {
+struct TaskCmdResultSender {
     command_id: CommandId,
-    result_tx: tokio::sync::oneshot::Sender::<TaskCommandResult>,
+    result_tx: tokio::sync::oneshot::Sender::<TaskCmdResult>,
 }
 
 #[derive(Debug)]
-struct TaskCommand {
-    command: TaskCommandType,
-    result_sender: TaskCommandResultSender,
+struct TaskCmd {
+    command: TaskCmdType,
+    result_sender: TaskCmdResultSender,
 }
 
 #[derive(Debug)]
-enum TaskCommandType {
+enum TaskCmdType {
     CastRpc(Box<CastRpc>),
     CastSend(Box<CastSend>),
     Shutdown,
@@ -165,7 +167,7 @@ struct TaskResponseBox {
     value: Box<dyn Any + Send + Sync>,
 }
 
-type TaskCommandResult = Result<TaskResponseBox>;
+type TaskCmdResult = Result<TaskResponseBox>;
 
 pub trait TokioAsyncStream: AsyncRead + AsyncWrite + Unpin {}
 
@@ -206,6 +208,7 @@ pub enum StatusMessage {
     Receiver(payload::receiver::Status),
 }
 
+#[derive(Clone, Debug)]
 pub struct ErrorStatus {
     // TODO: Implement this.
 
@@ -256,7 +259,7 @@ impl Config {
     pub async fn connect(self) -> Result<Client> {
         let conn = tls_connect(&self).await?;
 
-        let (task_cmd_tx, task_cmd_rx) = tokio::sync::mpsc::channel(TASK_CMD_CHANNEL_CAPACITY);
+        let (task_cmd_tx, task_cmd_rx) = mpsc::channel(TASK_CMD_CHANNEL_CAPACITY);
 
         let shared = Arc::new(Shared {
             config: self,
@@ -275,6 +278,7 @@ impl Config {
             next_request_id: AtomicI32::new(1),
 
             next_command_id: AtomicUsize::new(1),
+
             shared,
         };
 
@@ -286,7 +290,7 @@ impl Config {
 
 impl Client {
     pub async fn reconnect(&mut self) -> Result<()> {
-        todo(
+        todo!(
             "Use a new private variant of Config::connect that re-uses existing status_sender\n\
              then mem::replace(self, new)");
     }
@@ -503,7 +507,7 @@ impl Client {
     }
 
     pub async fn close(mut self) -> Result<()> {
-        let _: Box<()> = self.task_cmd::<()>(TaskCommandType::Shutdown).await?;
+        let _: Box<()> = self.task_cmd::<()>(TaskCmdType::Shutdown).await?;
 
         let join_fut = self.task_join_handle.take()
                            .expect("task_join_handle is Some(_) until .close().");
@@ -567,7 +571,7 @@ impl Client {
     {
         let (request_message, request_id) = self.cast_request_from_inner(req, destination)?;
 
-        let cmd_type = TaskCommandType::CastSend(Box::new(CastSend {
+        let cmd_type = TaskCmdType::CastSend(Box::new(CastSend {
             request_message,
             request_id,
         }));
@@ -590,7 +594,7 @@ impl Client {
         let response_ns = Resp::CHANNEL_NAMESPACE;
         let response_type_names = Resp::TYPE_NAMES;
 
-        let cmd_type = TaskCommandType::CastRpc(Box::new(CastRpc {
+        let cmd_type = TaskCmdType::CastRpc(Box::new(CastRpc {
             request_message,
             request_id,
             response_ns,
@@ -659,24 +663,24 @@ impl Client {
         Ok((request_message, request_id))
     }
 
-    async fn task_cmd<R>(&mut self, cmd_type: TaskCommandType)
+    async fn task_cmd<R>(&mut self, cmd_type: TaskCmdType)
     -> Result<Box<R>>
     where R: Any + Send + Sync
     {
         let command_id = self.take_command_id();
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<TaskCommandResult>();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<TaskCmdResult>();
 
-        let cmd = TaskCommand {
+        let cmd = TaskCmd {
             command: cmd_type,
-            result_sender: TaskCommandResultSender {
+            result_sender: TaskCmdResultSender {
                 command_id,
                 result_tx,
             },
         };
         let command_timeout: std::time::Duration = match &cmd.command {
-            TaskCommandType::CastRpc(_) => RPC_TIMEOUT,
-            TaskCommandType::CastSend(_) => RPC_TIMEOUT,
-            TaskCommandType::Shutdown => LOCAL_TASK_COMMAND_TIMEOUT,
+            TaskCmdType::CastRpc(_) => RPC_TIMEOUT,
+            TaskCmdType::CastSend(_) => RPC_TIMEOUT,
+            TaskCmdType::Shutdown => LOCAL_TASK_COMMAND_TIMEOUT,
         };
 
         self.task_cmd_tx.send_timeout(
@@ -751,7 +755,7 @@ async fn tls_connect(config: &Config)
 
 #[derive(Debug)]
 enum TaskEvent {
-    Cmd(TaskCommand),
+    Cmd(TaskCmd),
     Flush(Result<()>),
     MessageRead(Result<CastMessage>),
     RpcTimeout(DelayExpired<RequestId>),
@@ -760,7 +764,7 @@ enum TaskEvent {
 impl<S: TokioAsyncStream> Task<S> {
     pub fn new(
         conn: S,
-        task_cmd_rx: tokio::sync::mpsc::Receiver::<TaskCommand>,
+        task_cmd_rx: mpsc::Receiver::<TaskCmd>,
         shared: Arc<Shared>,
     ) -> Task<S> {
         let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx);
@@ -804,15 +808,15 @@ impl<S: TokioAsyncStream> Task<S> {
 
             match event {
                 TaskEvent::Cmd(cmd) => match cmd.command {
-                    TaskCommandType::CastRpc(rpc) => {
+                    TaskCmdType::CastRpc(rpc) => {
                         this.as_mut().handle_rpc_cmd(rpc, cmd.result_sender).await;
                     },
 
-                    TaskCommandType::CastSend(send) => {
+                    TaskCmdType::CastSend(send) => {
                         this.as_mut().handle_send(send, cmd.result_sender).await;
                     },
 
-                    TaskCommandType::Shutdown => {
+                    TaskCmdType::Shutdown => {
                         tracing::info!(target: METHOD_PATH,
                                        "shutdown on command");
                         Self::respond_generic(cmd.result_sender, Ok(()));
@@ -883,7 +887,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
     #[named]
     async fn handle_send(mut self: Pin<&mut Self>,
-                         send: Box<CastSend>, result_sender: TaskCommandResultSender)
+                         send: Box<CastSend>, result_sender: TaskCmdResultSender)
     {
         const METHOD_PATH: &str = method_path!("Task");
 
@@ -923,7 +927,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
     #[named]
     async fn handle_rpc_cmd(mut self: Pin<&mut Self>,
-                            rpc: Box<CastRpc>, result_sender: TaskCommandResultSender)
+                            rpc: Box<CastRpc>, result_sender: TaskCmdResultSender)
     {
         const METHOD_PATH: &str = method_path!("Task");
 
@@ -1262,19 +1266,19 @@ impl<S: TokioAsyncStream> Task<S> {
         self.send_logged(pong_msg).await
     }
 
-    fn respond_rpc(result_sender: TaskCommandResultSender,
+    fn respond_rpc(result_sender: TaskCmdResultSender,
                    result: Result<PayloadDyn>)
     {
         Self::respond_generic(result_sender, result);
     }
 
-    fn respond_send(result_sender: TaskCommandResultSender,
+    fn respond_send(result_sender: TaskCmdResultSender,
                     result: Result<()>)
     {
         Self::respond_generic(result_sender, result);
     }
 
-    fn respond_generic<R>(result_sender: TaskCommandResultSender,
+    fn respond_generic<R>(result_sender: TaskCmdResultSender,
                           result: Result<R>)
     where R: Any + Debug + Send + Sync
     {
@@ -1511,5 +1515,29 @@ impl StatusListener {
 
     pub fn try_recv(&mut self) -> Result<StatusUpdate, broadcast::error::TryRecvError> {
         self.receiver.try_recv()
+    }
+}
+
+impl Stream for StatusListener {
+    type Item = StatusUpdate;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>
+    ) -> Poll<Option<Self::Item>>
+    {
+        use broadcast::error::RecvError;
+
+        pin! { let recv = self.receiver.recv(); }
+        // let recv_pinned = Pin::new(&mut recv);
+
+        loop {
+            let res: Result<Self::Item, RecvError> = futures::ready!(recv.as_mut().poll(cx));
+            match res {
+                Ok(it) => return Poll::Ready(Some(it)),
+                Err(RecvError::Closed) => return Poll::Ready(None),
+                Err(RecvError::Lagged(_)) => continue,
+            };
+        }
     }
 }
