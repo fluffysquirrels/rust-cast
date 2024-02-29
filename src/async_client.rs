@@ -30,7 +30,7 @@ use protobuf::Message;
 use std::{
     any::{self, Any},
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{self, Debug},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{Arc, atomic::{AtomicI32, AtomicUsize, Ordering}},
@@ -76,7 +76,7 @@ pub struct Config {
 /// Data shared between `Client` and its `Task`.
 struct Shared {
     config: Config,
-    status_sender: broadcast::Sender<StatusUpdate>,
+    status_tx: broadcast::Sender<StatusUpdate>,
 }
 
 #[derive(Debug)]
@@ -104,7 +104,7 @@ pin_project! {
         conn_framed_stream: SplitStream<Framed<S, CastMessageCodec>>,
 
         #[pin]
-        task_cmd_rx: tokio_stream::wrappers::ReceiverStream::<TaskCmd>,
+        task_cmd_rx: tokio_stream::wrappers::ReceiverStream<TaskCmd>,
 
         #[pin]
         timeout_queue: DelayQueue<RequestId>,
@@ -164,7 +164,7 @@ struct CastSend {
 #[derive(Debug)]
 struct TaskResponseBox {
     type_name: &'static str,
-    value: Box<dyn Any + Send + Sync>,
+    value: Box<dyn Any + Send>,
 }
 
 type TaskCmdResult = Result<TaskResponseBox>;
@@ -179,8 +179,9 @@ type CommandId = usize;
 
 struct CastMessageCodec;
 
+// TODO: Does Stream impl for this work?
 pub struct StatusListener {
-    receiver: broadcast::Receiver<StatusUpdate>,
+    status_rx: broadcast::Receiver<StatusUpdate>,
 }
 
 #[derive(Clone, Debug)]
@@ -263,7 +264,7 @@ impl Config {
 
         let shared = Arc::new(Shared {
             config: self,
-            status_sender: broadcast::Sender::new(STATUS_BROADCAST_CHANNEL_CAPACITY),
+            status_tx: broadcast::Sender::new(STATUS_BROADCAST_CHANNEL_CAPACITY),
         });
 
         let task = Task::new(conn, task_cmd_rx, Arc::clone(&shared));
@@ -291,7 +292,7 @@ impl Config {
 impl Client {
     pub async fn reconnect(&mut self) -> Result<()> {
         todo!(
-            "Use a new private variant of Config::connect that re-uses existing status_sender\n\
+            "Use a new private variant of Config::connect that re-uses existing status_tx\n\
              then mem::replace(self, new)");
     }
 
@@ -498,12 +499,30 @@ impl Client {
         Ok(status)
     }
 
-    pub fn listen_to_status(&self) -> StatusListener {
+    // TODO: Broken, use listen_status_2.
+    pub fn listen_status(&self) -> StatusListener {
+        todo!("TODO: Fix the Stream impl for StatusListener.")
+
         // TODO: Set up auto connect for the media app?
 
         StatusListener {
-            receiver: self.shared.status_sender.subscribe(),
+            status_rx: self.shared.status_tx.subscribe(),
         }
+    }
+
+    pub fn listen_status_2(&self) -> impl Stream<Item = StatusUpdate> + Send {
+        // TODO: Set up auto connect for the media app?
+        tokio_stream::wrappers::BroadcastStream::new(self.shared.status_tx.subscribe())
+            .filter_map(|res| futures::future::ready(match res {
+                Ok(it) => Some(it),
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                    tracing::warn!(target: concat!(module_path!(),
+                                                   "::Client::listen_status_2"),
+                                   n,
+                                   "lagged");
+                    None
+                },
+            }))
     }
 
     pub async fn close(mut self) -> Result<()> {
@@ -548,6 +567,7 @@ impl Client {
         let expected_types = Resp::TYPE_NAMES;
 
         // TODO: Why did I disable this?
+        // Was it to try JSON deserialisation anyway to get better / different diagnostics?
         if false && !expected_types.contains(&payload_dyn.typ.as_str()) {
             bail!("Unexpected type in response payload\n\
                    request_id:     {rid:?}\n\
@@ -711,6 +731,18 @@ impl Drop for Client {
     }
 }
 
+impl Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Client")
+         .field("config", &self.shared.config)
+         .field("task", if self.task_join_handle.is_some() { &"Some" } else { &"None" })
+         .finish_non_exhaustive()
+    }
+}
+
+#[tracing::instrument(level = "info",
+                      fields(ip = ?config.addr.ip(),
+                             port = config.addr.port()))]
 #[named]
 async fn tls_connect(config: &Config)
 -> Result<impl TokioAsyncStream>
@@ -719,7 +751,6 @@ async fn tls_connect(config: &Config)
 
     let addr = &config.addr;
     let ip: IpAddr = addr.ip();
-    let port: u16 = addr.port();
 
     let mut tls_config = rustls::ClientConfig::builder()
         .dangerous().with_custom_certificate_verifier(Arc::new(
@@ -733,12 +764,6 @@ async fn tls_connect(config: &Config)
 
     let ip_rustls = rustls::pki_types::IpAddr::from(ip);
     let domain = rustls::pki_types::ServerName::IpAddress(ip_rustls);
-
-    let _conn_span = tracing::info_span!(
-        target: FUNCTION_PATH,
-        "Connecting to cast device",
-        %addr, %ip, port,
-    ).entered();
 
     let tcp_stream = tokio::net::TcpStream::connect(addr).await?;
 
@@ -993,7 +1018,7 @@ impl<S: TokioAsyncStream> Task<S> {
             .checked_add(RPC_TIMEOUT)
             .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
 
-        let msg_debug = format!("{msg:#?}");
+        let msg_debug = format!("{msg:?}");
 
         tracing::debug!(target: METHOD_PATH,
                         ?deadline,
@@ -1350,12 +1375,17 @@ impl<S: TokioAsyncStream> Task<S> {
 
     #[named]
     fn publish_status_update(&self, update: StatusUpdate) {
-        tracing::debug!(target: method_path!("Task"),
+        const METHOD_PATH: &str = method_path!("Task");
+        tracing::debug!(target: METHOD_PATH,
                         ?update,
                         "status update");
 
         // Ignore an error result, which just means no receivers are currently listening.
-        let _ = self.shared.status_sender.send(update);
+        if let Err(err) = self.shared.status_tx.send(update) {
+            tracing::trace!(target: METHOD_PATH,
+                            ?err,
+                            "status send err");
+        }
     }
 
     fn config(&self) -> &Config {
@@ -1510,14 +1540,15 @@ impl Config {
 
 impl StatusListener {
     pub async fn recv(&mut self) -> Result<StatusUpdate, broadcast::error::RecvError> {
-        self.receiver.recv().await
+        self.status_rx.recv().await
     }
 
     pub fn try_recv(&mut self) -> Result<StatusUpdate, broadcast::error::TryRecvError> {
-        self.receiver.try_recv()
+        self.status_rx.try_recv()
     }
 }
 
+// TODO: Is this broken like in downloader?
 impl Stream for StatusListener {
     type Item = StatusUpdate;
 
@@ -1528,8 +1559,7 @@ impl Stream for StatusListener {
     {
         use broadcast::error::RecvError;
 
-        pin! { let recv = self.receiver.recv(); }
-        // let recv_pinned = Pin::new(&mut recv);
+        pin! { let recv = self.status_rx.recv(); }
 
         loop {
             let res: Result<Self::Item, RecvError> = futures::ready!(recv.as_mut().poll(cx));

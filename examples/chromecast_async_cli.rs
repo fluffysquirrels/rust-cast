@@ -103,7 +103,7 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
     }
 
     if sub_args.follow {
-        let listener = client.listen_to_status();
+        let listener = client.listen_status_2();
 
         pin! {
             let cancel_stream = futures::stream::once(pause());
