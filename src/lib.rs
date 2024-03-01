@@ -34,10 +34,6 @@ use message_manager::{CastMessage, MessageManager};
 // use rustls::{ClientConnection, OwnedTrustAnchor, RootCertStore, StreamOwned};
 use rustls::{ClientConnection, StreamOwned};
 
-
-const DEFAULT_SENDER_ID: &str = "sender-0";
-const DEFAULT_RECEIVER_ID: &str = "receiver-0";
-
 #[cfg(feature = "thread_safe")]
 type Lrc<T> = std::sync::Arc<T>;
 #[cfg(not(feature = "thread_safe"))]
@@ -94,8 +90,12 @@ pub(crate) mod tests {
 }
 
 
-#[cfg(any())] // Disabled
+#[cfg(any())] // Disabled. TODO: Rewrite sync Client to use a common base with async_client.
 mod boop {
+
+const DEFAULT_SENDER_ID: &str = "sender-0";
+const DEFAULT_RECEIVER_ID: &str = "receiver-0";
+
 struct NoCertificateVerification {}
 
 impl rustls::client::ServerCertVerifier for NoCertificateVerification {

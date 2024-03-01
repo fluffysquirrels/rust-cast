@@ -501,7 +501,7 @@ impl Client {
 
     // TODO: Broken, use listen_status_2.
     pub fn listen_status(&self) -> StatusListener {
-        todo!("TODO: Fix the Stream impl for StatusListener.")
+        todo!("TODO: Fix the Stream impl for StatusListener.");
 
         // TODO: Set up auto connect for the media app?
 
