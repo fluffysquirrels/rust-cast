@@ -1571,3 +1571,153 @@ impl Stream for StatusListener {
         }
     }
 }
+
+pub struct StatusUpdateSmallDebug<'a>(pub &'a StatusUpdate);
+pub struct StatusMessageSmallDebug<'a>(pub &'a StatusMessage);
+
+pub struct ReceiverStatusSmallDebug<'a>(pub &'a proxies::receiver::Status);
+pub struct ApplicationsSmallDebug<'a>(pub &'a [proxies::receiver::Application]);
+pub struct ApplicationSmallDebug<'a>(pub &'a proxies::receiver::Application);
+pub struct VolumeSmallDebug<'a>(pub &'a proxies::receiver::Volume);
+
+pub struct MediaStatusItemsSmallDebug<'a>(pub &'a [proxies::media::Status]);
+pub struct MediaStatusItemSmallDebug<'a>(pub &'a proxies::media::Status);
+pub struct MediaSmallDebug<'a>(pub &'a proxies::media::Media);
+pub struct MetadataSmallDebug<'a>(pub &'a proxies::media::Metadata);
+
+impl<'a> Debug for StatusUpdateSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("StatusUpdate")
+         .field("time", &self.0.time)
+         .field("msg", &StatusMessageSmallDebug(&self.0.msg))
+         .finish()
+    }
+}
+
+impl<'a> Debug for StatusMessageSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            StatusMessage::Media(ms) => {
+                f.debug_struct("StatusMessage::Media")
+                 .field("status", &MediaStatusItemsSmallDebug(&ms.status))
+                 .finish()
+            },
+
+            StatusMessage::Receiver(rs) =>
+                Debug::fmt(&ReceiverStatusSmallDebug(&rs.status), f),
+
+            _ => Debug::fmt(self, f),
+        }
+    }
+}
+
+impl<'a> Debug for ReceiverStatusSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ReceiverStatus")
+         .field("applications", &ApplicationsSmallDebug(&self.0.applications))
+         .field("volume", &VolumeSmallDebug(&self.0.volume))
+         .finish()
+         // .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Debug for ApplicationsSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut d = f.debug_list();
+        for item in self.0 {
+            d.entry(&ApplicationSmallDebug(item));
+        }
+        d.finish()
+    }
+}
+
+impl<'a> Debug for ApplicationSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Application")
+         // .field("app_id", &self.0.app_id)
+         .field("session_id", &self.0.session_id)
+         // .field("transport_id", &self.0.transport_id)
+         .field("display_name", &self.0.display_name)
+         .field("status_text", &self.0.status_text)
+         // .field("namespaces", &todo)
+         .finish()
+         // .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Debug for VolumeSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Volume {{ level: {level}, muted: {muted} }}",
+               level = match self.0.level {
+                   None => "None".to_string(),
+                   Some(l) => format!("{l:.2}"),
+               },
+               muted = match self.0.muted {
+                   None => "None".to_string(),
+                   Some(m) => format!("{m}"),
+               })
+    }
+}
+
+impl<'a> Debug for MediaStatusItemsSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut d = f.debug_list();
+        for item in self.0 {
+            d.entry(&MediaStatusItemSmallDebug(item));
+        }
+        d.finish()
+    }
+}
+
+impl<'a> Debug for MediaStatusItemSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("MediaStatusItem")
+         .field("media_session_id", &self.0.media_session_id)
+         .field("media", &self.0.media.as_ref().map(|m| MediaSmallDebug(m)))
+         .field("idle_reason", &self.0.idle_reason)
+         .field("current_time", &self.0.current_time)
+         .field("current_item_id", &self.0.current_item_id)
+         // .field("items", &self.0.items)
+         .finish()
+         // .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Debug for MediaSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Media")
+         .field("content_id", &self.0.content_id)
+         .field("content_url", &self.0.content_url)
+         .field("stream_type", &self.0.stream_type)
+         .field("content_type", &self.0.content_type)
+         .field("duration", &self.0.duration)
+         .field("metadata", &self.0.metadata.as_ref().map(|m| MetadataSmallDebug(m)))
+         .finish()
+         // .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Debug for MetadataSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut s = f.debug_struct("Metadata");
+
+        opt_field(&mut s, "title", &self.0.title);
+        opt_field(&mut s, "series_title", &self.0.series_title);
+        opt_field(&mut s, "subtitle", &self.0.subtitle);
+        opt_field(&mut s, "season", &self.0.season);
+        opt_field(&mut s, "episode", &self.0.episode);
+
+        s.finish()
+        // s.finish_non_exhaustive()
+    }
+}
+
+fn opt_field<'a, 'b: 'a>(debug_struct: &mut std::fmt::DebugStruct<'a, 'b>,
+                         name: &str, value: &Option<impl Debug>)
+{
+    let Some(ref value) = value else {
+        return;
+    };
+
+    debug_struct.field(name, value);
+}
