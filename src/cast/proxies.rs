@@ -167,6 +167,7 @@ pub mod media {
         pub custom_data: CustomData,
     }
 
+    #[serde_with::serde_as]
     #[derive(Clone, Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Item {
@@ -174,6 +175,10 @@ pub mod media {
 
         #[serde(skip_serializing_if = "Option::is_none")]
         pub media: Option<Media>,
+
+        // `auto_play` seems to sometimes be serialised as a JSON string, like `"false"`.
+        // Support deserialising from a bool or string, serialise as a bool.
+        #[serde_as(as = "serde_with::PickFirst<(_, serde_with::DisplayFromStr)>")]
 
         #[serde(rename = "autoplay")]
         pub auto_play: bool,
@@ -345,6 +350,11 @@ pub mod media {
         pub current_item_id: Option<i32>,
         pub supported_media_commands: u32,
         pub items: Option<Vec<Item>>,
+
+        pub repeat_mode: Option<String>,
+
+        /// Warning: this seems invalid. Volume level is always 1.0 in testing.
+        pub volume: super::receiver::Volume,
     }
 
     #[derive(Deserialize, Debug)]
@@ -489,18 +499,6 @@ pub mod receiver {
         pub name: String,
     }
 
-    impl From<&str> for AppNamespace {
-        fn from(s: &str) -> AppNamespace {
-            AppNamespace::from(s.to_string())
-        }
-    }
-
-    impl From<String> for AppNamespace {
-        fn from(s: String) -> AppNamespace {
-            AppNamespace { name: s }
-        }
-    }
-
     /// Structure that describes possible cast device volume options.
     #[derive(Clone, Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -542,7 +540,23 @@ pub mod receiver {
         types::{AppSession, EndpointId},
     };
 
+    impl From<&str> for AppNamespace {
+        fn from(s: &str) -> AppNamespace {
+            AppNamespace::from(s.to_string())
+        }
+    }
+
+    impl From<String> for AppNamespace {
+        fn from(s: String) -> AppNamespace {
+            AppNamespace { name: s }
+        }
+    }
+
     impl Application {
+        pub fn has_namespace(&self, ns: &str) -> bool {
+            self.namespaces.iter().any(|app_ns| app_ns.name == ns)
+        }
+
         pub fn to_app_session(&self, receiver_destination_id: EndpointId)
         -> Result<AppSession> {
             Ok(AppSession {

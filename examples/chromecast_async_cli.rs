@@ -6,14 +6,16 @@ use rust_cast::{
     async_client::{self as client, Client, /* Error, */ Result,
                    LoadMediaArgs,
                    DEFAULT_RECEIVER_ID as RECEIVER_ID},
-    cast::proxies::{self, media::CustomData, receiver::AppNamespace},
-    types::MediaSession,
+    cast::proxies::{self, media::CustomData},
+    payload,
+    types::{MediaSession, NamespaceConst},
     function_path, named,
 };
 use tokio::{
     io::AsyncReadExt,
     pin,
 };
+use tokio_util::either::Either;
 
 #[derive(clap::Parser, Clone, Debug)]
 struct Args {
@@ -54,7 +56,16 @@ struct StatusArgs {
     /// Pass flag to stay connected and follow status until stopped.
     #[arg(long, default_value_t = false)]
     follow: bool,
+
+    /// Pass flag to poll cast device's status.
+    ///
+    /// Requires `--follow`.
+    #[arg(long, default_value_t = false, requires = "follow")]
+    poll: bool,
 }
+
+const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
+
 
 #[tokio::main]
 // #[named]
@@ -87,43 +98,56 @@ async fn main() -> Result<()> {
 }
 
 async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
-    let receiver_status = client.receiver_status().await?;
-    println!("receiver_status = {receiver_status:#?}");
-
-    let media_ns = AppNamespace::from(lib::payload::media::CHANNEL_NAMESPACE);
-
-    for media_app in
-        receiver_status.applications.iter().filter(
-            |app| app.namespaces.contains(&media_ns))
-    {
-        let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
-        client.connection_connect(session.app_destination_id.clone()).await?;
-        let media_status = client.media_status(session, /* media_session_id: */ None).await?;
-        println!("media_status = {media_status:#?}");
-    }
+    status_single(&mut client).await?;
 
     if sub_args.follow {
+        enum Event {
+            PollStatus,
+            Update(client::StatusUpdate),
+            UserExit,
+        }
+
         let listener = client.listen_status_2();
 
         pin! {
             let cancel_stream = futures::stream::once(pause());
         };
 
-
-        enum Event {
-            Update(client::StatusUpdate),
-            UserExit,
-        }
+        let poll_interval = if sub_args.poll {
+            Either::Left(tokio_stream::wrappers::IntervalStream::new(
+                tokio::time::interval(std::time::Duration::from_secs(2))))
+        } else {
+            Either::Right(futures::stream::pending())
+        };
 
         let mut merged = futures_concurrency::stream::Merge::merge((
+            poll_interval.map(|_| Event::PollStatus),
             listener.map(Event::Update),
             cancel_stream.map(|_| Event::UserExit),
         ));
 
         while let Some(event) = merged.next().await {
             match event {
+                Event::PollStatus => {
+                    status_single(&mut client).await?;
+                },
                 Event::Update(update) => {
-                    println!(" # listener status update = {update:#?}\n # ====\n\n");
+                    // println!(" # listener status update = {update:#?}\n\n");
+                    println!(" # listener status update (small) = {update_small:#?}\n\
+                              ====\n\n",
+                             update_small = client::StatusUpdateSmallDebug(&update));
+
+                    // TODO: if receiver app changes and has media namespace, get status.
+                    // TODO: Support this optionally in Client?
+                    if let client::StatusMessage::Receiver(status) = update.msg {
+                        for media_app in
+                               status.status.applications
+                                   .iter()
+                                   .filter(|app| app.has_namespace(MEDIA_NS))
+                        {
+                            client.connection_connect(media_app.transport_id.clone()).await?;
+                        }
+                    }
                 },
                 Event::UserExit => break,
             }
@@ -131,6 +155,27 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
     }
 
     client.close().await?;
+
+    Ok(())
+}
+
+async fn status_single(client: &mut Client) -> Result<()> {
+    let receiver_status = client.receiver_status().await?;
+    // println!("receiver_status = {receiver_status:#?}");
+    let receiver_status_small = client::ReceiverStatusSmallDebug(&receiver_status);
+    println!("receiver_status (small) = {receiver_status_small:#?}");
+
+    for media_app in
+        receiver_status.applications.iter().filter(
+            |app| app.has_namespace(MEDIA_NS))
+    {
+        let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
+        client.connection_connect(session.app_destination_id.clone()).await?;
+        let media_status = client.media_status(session, /* media_session_id: */ None).await?;
+        // println!("media_status = {media_status:#?}");
+        let media_status_small = client::MediaStatusItemsSmallDebug(&media_status.status);
+        println!("media_status (small) = {media_status_small:#?}");
+    }
 
     Ok(())
 }
@@ -207,11 +252,9 @@ async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
 
     let receiver_status = client.receiver_status().await?;
 
-    let media_ns = AppNamespace::from(lib::payload::media::CHANNEL_NAMESPACE);
-
     let Some(media_app)
         = receiver_status.applications.iter()
-            .find(|app| app.namespaces.contains(&media_ns)) else
+            .find(|app| app.has_namespace(MEDIA_NS)) else
     {
         bail!("{FUNCTION_PATH}: No media app found.\n\
                _ receiver_status = {receiver_status:#?}");
