@@ -257,6 +257,7 @@ pub mod app {
 pub const DEFAULT_PORT: u16 = 8009;
 
 impl Config {
+    #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn connect(self) -> Result<Client> {
         let conn = tls_connect(&self).await?;
 
@@ -740,7 +741,7 @@ impl Debug for Client {
     }
 }
 
-#[tracing::instrument(level = "info",
+#[tracing::instrument(level = "debug",
                       fields(ip = ?config.addr.ip(),
                              port = config.addr.port()))]
 #[named]
@@ -748,6 +749,8 @@ async fn tls_connect(config: &Config)
 -> Result<impl TokioAsyncStream>
 {
     const FUNCTION_PATH: &str = function_path!();
+
+    let deadline = tokio::time::Instant::now() + RPC_TIMEOUT;
 
     let addr = &config.addr;
     let ip: IpAddr = addr.ip();
@@ -765,12 +768,16 @@ async fn tls_connect(config: &Config)
     let ip_rustls = rustls::pki_types::IpAddr::from(ip);
     let domain = rustls::pki_types::ServerName::IpAddress(ip_rustls);
 
-    let tcp_stream = tokio::net::TcpStream::connect(addr).await?;
+    let tcp_stream = tokio::time::timeout_at(
+        deadline,
+        tokio::net::TcpStream::connect(addr)).await??;
 
     tracing::debug!(target: FUNCTION_PATH,
                     "TcpStream connected");
 
-    let tls_stream = connector.connect(domain, tcp_stream).await?;
+    let tls_stream = tokio::time::timeout_at(
+        deadline,
+        connector.connect(domain, tcp_stream)).await??;
 
     tracing::debug!(target: FUNCTION_PATH,
                     "TlsStream connected");
