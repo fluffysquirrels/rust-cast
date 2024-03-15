@@ -1143,7 +1143,7 @@ impl<S: TokioAsyncStream> Task<S> {
         if msg_ns == payload::connection::CHANNEL_NAMESPACE
             && pd.typ == payload::connection::MESSAGE_TYPE_CLOSE
         {
-            tracing::warn!(target: METHOD_PATH,
+            tracing::debug!(target: METHOD_PATH,
                             ?msg, ?pd, pd_type,
                             "Connection closed message from destination.\n\n\
                              This may mean we were never connected to the destination \
@@ -1190,7 +1190,13 @@ impl<S: TokioAsyncStream> Task<S> {
 
         let mut proj = self.as_mut().project();
 
+        // TODO: Do broadcast messages ever have request_id?
+
         let Some(request_state) = proj.requests_map.remove(&request_id) else {
+            if msg_is_broadcast {
+                return;
+            }
+
             tracing::warn!(target: METHOD_PATH,
                            request_id, ?msg, ?pd, pd_type,
                            "missing request state");
@@ -1388,10 +1394,9 @@ impl<S: TokioAsyncStream> Task<S> {
                         "status update");
 
         // Ignore an error result, which just means no receivers are currently listening.
-        if let Err(err) = self.shared.status_tx.send(update) {
+        if let Err(_err) = self.shared.status_tx.send(update) {
             tracing::trace!(target: METHOD_PATH,
-                            ?err,
-                            "status send err");
+                            "status send err: no receivers listening");
         }
     }
 
@@ -1678,16 +1683,25 @@ impl<'a> Debug for MediaStatusItemsSmallDebug<'a> {
 
 impl<'a> Debug for MediaStatusItemSmallDebug<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // `DebugInline` is used to override Formatter's `alternate` setting
+        // (i.e. using `{:#?}`) to remove unnecessary whitespace.
+
         f.debug_struct("MediaStatusItem")
-         .field("media_session_id", &self.0.media_session_id)
-         .field("media", &self.0.media.as_ref().map(|m| MediaSmallDebug(m)))
-         .field("idle_reason", &self.0.idle_reason)
+         .field("player_state", &self.0.player_state)
          .field("current_time",
-                // Override formatter's `alternate` setting (i.e. using `{:#?}`)
-                // to remove unnecessary whitespace.
                 &DebugInline(&format!("{:?}", &self.0.current_time)))
-         .field("current_item_id", &self.0.current_item_id)
+         .field("media", &self.0.media.as_ref().map(|m| MediaSmallDebug(m)))
+         .field("idle_reason",
+                &DebugInline(&format!("{:?}", &self.0.idle_reason)))
+         .field("media_session_id", &self.0.media_session_id)
+         .field("current_item_id",
+                &DebugInline(&format!("{:?}", &self.0.current_item_id)))
+         .field("repeat_mode", &DebugInline(&format!("{:?}", &self.0.repeat_mode)))
          // .field("items", &self.0.items)
+
+         // Volume level seems to be always 1.0, no point showing it.
+         // .field("volume", &VolumeSmallDebug(&self.0.volume))
+
          .finish()
          // .finish_non_exhaustive()
     }
