@@ -6,7 +6,7 @@ use crate::{
         CastMessage,
         CastMessagePayload,
     },
-    payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner,
+    payload::{self, Payload, PayloadDyn, RequestId, RequestInner, ResponseInner,
               media::{CustomData, MediaRequestCommon}},
     types::{AppId, /* AppIdConst, */
             AppSession,
@@ -15,7 +15,7 @@ use crate::{
             MediaSessionId,
             /* MessageType, */ MessageTypeConst,
             /* Namespace, */ NamespaceConst,
-            RequestId, /* SessionId */},
+            /* SessionId */},
     util::{named, fmt::DebugInline},
 };
 use futures::{
@@ -632,7 +632,7 @@ impl Client {
                         response_ns,
                         response_type_name = resp.typ,
                         expected_response_type_names = ?response_type_names,
-                        request_id,
+                        request_id = request_id.inner(),
                         "json_rpc response");
 
         Ok(resp)
@@ -657,7 +657,7 @@ impl Client {
 
         tracing::debug!(target: METHOD_PATH,
                         ?payload,
-                        request_id,
+                        request_id = request_id.inner(),
                         request_type = payload.typ,
                         request_namespace,
                         sender, destination,
@@ -667,7 +667,7 @@ impl Client {
 
         tracing::trace!(target: METHOD_PATH,
                         payload_json,
-                        request_id,
+                        request_id = request_id.inner(),
                         request_type = payload.typ,
                         request_namespace,
                         sender, destination,
@@ -714,7 +714,15 @@ impl Client {
     }
 
     fn take_request_id(&self) -> RequestId {
-        self.next_request_id.fetch_add(1, Ordering::SeqCst)
+        loop {
+            let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+            if id == RequestId::BROADCAST.inner() {
+                // Receivers use 0 for broadcast messages, take the next value.
+                continue;
+            }
+
+            return RequestId::rpc_id_from(id);
+        }
     }
 
     fn take_command_id(&self) -> CommandId {
@@ -937,7 +945,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
         tracing::debug!(target: METHOD_PATH,
                         ?deadline,
-                        request_id,
+                        request_id = request_id.inner(),
                         command_id,
                         ?request_message,
                         "msg send");
@@ -948,7 +956,7 @@ impl<S: TokioAsyncStream> Task<S> {
             tracing::warn!(target: METHOD_PATH,
                            ?err,
                            send = send_debug,
-                           request_id,
+                           request_id = request_id.inner(),
                            command_id,
                            "send_raw error");
         }
@@ -979,7 +987,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
         tracing::trace!(target: METHOD_PATH,
                         ?deadline,
-                        request_id,
+                        request_id = request_id.inner(),
                         command_id,
                         ?request_message,
                         response_ns,
@@ -990,7 +998,7 @@ impl<S: TokioAsyncStream> Task<S> {
             tracing::warn!(target: METHOD_PATH,
                            ?err,
                            rpc = rpc_debug,
-                           request_id,
+                           request_id = request_id.inner(),
                            command_id,
                            response_ns,
                            ?response_type_names,
@@ -1174,7 +1182,7 @@ impl<S: TokioAsyncStream> Task<S> {
         }
 
         let request_id = match pd.request_id {
-            Some(0) | None => {
+            Some(RequestId::BROADCAST) | None => {
                 if msg_is_broadcast {
                     return;
                 }
@@ -1197,7 +1205,8 @@ impl<S: TokioAsyncStream> Task<S> {
             }
 
             tracing::warn!(target: METHOD_PATH,
-                           request_id, ?msg, ?pd, pd_type,
+                           request_id = request_id.inner(),
+                           ?msg, ?pd, pd_type,
                            "missing request state");
             return;
         };
@@ -1256,7 +1265,7 @@ impl<S: TokioAsyncStream> Task<S> {
         tracing::warn!(target: METHOD_PATH,
                        ?expired,
                        ?deadline,
-                       request_id,
+                       request_id = request_id.inner(),
                        ?request_state,
                        "rpc timeout");
 

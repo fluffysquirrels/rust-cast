@@ -4,15 +4,25 @@ use crate::{
             EndpointId,
             MediaSessionId,
             MessageType, MessageTypeConst,
-            NamespaceConst,
-            RequestId, SessionId},
+            NamespaceConst, SessionId},
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     borrow::Cow,
-    fmt::Debug,
+    fmt::{self, Debug, Display},
 };
+
+/// i32 that represents a request_id in the Chromecast protocol.
+///
+/// Zero is only used in broadcast responses with no corresponding request.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct RequestId(i32);
+
+impl RequestId {
+    pub const BROADCAST: RequestId = RequestId(0);
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +52,43 @@ pub trait ResponseInner: Debug + DeserializeOwned
 }
 
 pub const USER_AGENT: &str = "RustCast; https://github.com/azasypkin/rust-cast";
+
+
+impl RequestId {
+    pub fn inner(self) -> i32 {
+        self.0
+    }
+
+    pub fn rpc_id_from(n: i32) -> RequestId {
+        let id = RequestId(n);
+
+        if id.is_broadcast() {
+            panic!("RequestId::rpc_id_from: was broadcast = {id}");
+        }
+
+        id
+    }
+
+    pub fn is_broadcast(self) -> bool {
+        self == RequestId::BROADCAST
+    }
+
+    pub fn is_rpc(self) -> bool {
+        self != RequestId::BROADCAST
+    }
+}
+
+impl Into<i32> for RequestId {
+    fn into(self) -> i32 {
+        self.0
+    }
+}
+
+impl Display for RequestId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
 
 pub mod connection {
     use super::*;
