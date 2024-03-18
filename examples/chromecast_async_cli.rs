@@ -6,7 +6,6 @@ use rust_cast::{
     async_client::{self as client, Client, /* Error, */ Result,
                    LoadMediaArgs,
                    DEFAULT_RECEIVER_ID as RECEIVER_ID},
-    cast::proxies::{self, media::CustomData},
     payload,
     types::{MediaSession, NamespaceConst},
     function_path, named,
@@ -74,8 +73,9 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // TODO: mdns service discovery
-    let addr = args.target.to_direct_socket_addr()?;
+    tracing::debug!(?args, "args");
+
+    let addr = args.target.resolve_to_socket_addr().await?;
 
     let config = client::Config {
         addr,
@@ -141,7 +141,7 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
                     // TODO: Support this optionally in Client?
                     if let client::StatusMessage::Receiver(status) = update.msg {
                         for media_app in
-                               status.status.applications
+                               status.applications
                                    .iter()
                                    .filter(|app| app.has_namespace(MEDIA_NS))
                         {
@@ -173,7 +173,7 @@ async fn status_single(client: &mut Client) -> Result<()> {
         client.connection_connect(session.app_destination_id.clone()).await?;
         let media_status = client.media_status(session, /* media_session_id: */ None).await?;
         // println!("media_status = {media_status:#?}");
-        let media_status_small = client::MediaStatusItemsSmallDebug(&media_status.status);
+        let media_status_small = client::MediaStatusSmallDebug(&media_status);
         println!("media_status (small) = {media_status_small:#?}");
     }
 
@@ -207,7 +207,7 @@ async fn set_volume_main(mut client: Client, sub_args: SetVolumeArgs) -> Result<
         bail!("Bad volume level {level}; it must be between 0.0 and 1.0");
     }
 
-    let volume = proxies::receiver::Volume {
+    let volume = payload::receiver::Volume {
         level: Some(level),
         muted: None,
 
@@ -267,7 +267,7 @@ async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
                                            /* media_session_id: */ None).await?;
 
     let Some(media_session_id) =
-        media_status.status.first()
+        media_status.entries.first()
             .map(|s| s.media_session_id) else
     {
         bail!("{FUNCTION_PATH}: No media status entry\n\
@@ -293,14 +293,14 @@ async fn demo_main(mut client: Client, sub_args: DemoArgs) -> Result<()> {
     let media_url =
         "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
     let media = LoadMediaArgs {
-        media: proxies::media::Media {
+        media: payload::media::Media {
             content_id: media_url.to_string(),
             stream_type: "NONE".to_string(), // one of "NONE", "BUFFERED", "LIVE"
             content_type: "".to_string(),
             metadata: None,
             duration: None, // : Option<f32>
             content_url: None, // : Option<String>
-            custom_data: CustomData::default(),
+            custom_data: payload::media::CustomData::default(),
         },
 
         current_time: 0_f64,

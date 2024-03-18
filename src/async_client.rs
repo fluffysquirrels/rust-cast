@@ -2,13 +2,12 @@ use anyhow::{bail, format_err};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Utc};
 use crate::{
-    cast::proxies::{self, media::CustomData},
     message::{
         CastMessage,
         CastMessagePayload,
     },
     payload::{self, Payload, PayloadDyn, RequestInner, ResponseInner,
-              media::MediaRequestCommon},
+              media::{CustomData, MediaRequestCommon}},
     types::{AppId, /* AppIdConst, */
             AppSession,
             EndpointId, EndpointIdConst, ENDPOINT_BROADCAST,
@@ -81,7 +80,7 @@ struct Shared {
 
 #[derive(Debug)]
 pub struct LoadMediaArgs {
-    pub media: proxies::media::Media,
+    pub media: payload::media::Media,
 
     pub current_time: f64,
     pub autoplay: bool,
@@ -297,7 +296,7 @@ impl Client {
              then mem::replace(self, new)");
     }
 
-    pub async fn receiver_status(&mut self) -> Result<proxies::receiver::Status> {
+    pub async fn receiver_status(&mut self) -> Result<payload::receiver::Status> {
         let payload_req = payload::receiver::GetStatusRequest {};
 
         let resp: Payload<payload::receiver::GetStatusResponse>
@@ -308,7 +307,7 @@ impl Client {
 
     #[named]
     pub async fn receiver_launch_app(&mut self, destination_id: EndpointId, app_id: AppId)
-    -> Result<(proxies::receiver::Application, proxies::receiver::Status)>
+    -> Result<(payload::receiver::Application, payload::receiver::Status)>
     {
         const METHOD_PATH: &str = method_path!("Client");
 
@@ -319,7 +318,7 @@ impl Client {
         let resp: Payload<payload::receiver::LaunchResponse>
             = self.json_rpc(payload_req, destination_id).await?;
 
-        let payload::receiver::LaunchResponse::Ok(payload::receiver::Status { status })
+        let payload::receiver::LaunchResponse::Ok(payload::receiver::StatusWrapper { status })
             = resp.inner else
         {
             bail!("{METHOD_PATH}: error response:\n\
@@ -341,9 +340,9 @@ impl Client {
 
     #[named]
     pub async fn receiver_stop_app(&mut self, app_session: AppSession)
-    -> Result<proxies::receiver::Status>
+    -> Result<payload::receiver::Status>
     {
-        use payload::receiver::{StopRequest, StopResponse};
+        use payload::receiver::{StatusWrapper, StopRequest, StopResponse};
 
         const METHOD_PATH: &str = method_path!("Client");
 
@@ -354,7 +353,7 @@ impl Client {
         let resp: Payload<StopResponse>
             = self.json_rpc(payload_req, app_session.receiver_destination_id).await?;
 
-        let StopResponse::Ok(payload::receiver::Status { status }) = resp.inner else {
+        let StopResponse::Ok(StatusWrapper { status }) = resp.inner else {
             bail!("{METHOD_PATH}: error response\n\
                    response: {resp:#?}");
         };
@@ -365,10 +364,10 @@ impl Client {
     #[named]
     pub async fn receiver_set_volume(&mut self,
                                      destination_id: EndpointId,
-                                     volume: proxies::receiver::Volume)
-    -> Result<proxies::receiver::Status>
+                                     volume: payload::receiver::Volume)
+    -> Result<payload::receiver::Status>
     {
-        use payload::receiver::{SetVolumeRequest, SetVolumeResponse};
+        use payload::receiver::{SetVolumeRequest, SetVolumeResponse, StatusWrapper};
 
         const METHOD_PATH: &str = method_path!("Client");
 
@@ -379,7 +378,7 @@ impl Client {
         let resp: Payload<SetVolumeResponse>
             = self.json_rpc(payload_req, destination_id).await?;
 
-        let SetVolumeResponse::Ok(payload::receiver::Status { status }) = resp.inner else {
+        let SetVolumeResponse::Ok(StatusWrapper { status }) = resp.inner else {
             bail!("{METHOD_PATH}: error response\n\
                    response: {resp:#?}");
         };
@@ -388,7 +387,7 @@ impl Client {
     }
 
     pub async fn media_launch_default(&mut self, destination_id: EndpointId)
-    -> Result<(AppSession, proxies::receiver::Status)> {
+    -> Result<(AppSession, payload::receiver::Status)> {
         let (app, status) = self.receiver_launch_app(destination_id.clone(),
                                                      app::DEFAULT_MEDIA_RECEIVER.into()).await?;
         let session = app.to_app_session(destination_id.clone())?;
@@ -1357,16 +1356,18 @@ impl<S: TokioAsyncStream> Task<S> {
                 }
             };
 
+        let payload::receiver::StatusWrapper { status: recv_status } = pd_typed.inner.0;
+
         let update = StatusUpdate {
             time: msg_time,
-            msg: StatusMessage::Receiver(pd_typed.inner.0),
+            msg: StatusMessage::Receiver(recv_status),
         };
         self.publish_status_update(update);
     }
 
     #[named]
     fn publish_media_status(&self,
-                               msg: &CastMessage, pd: &PayloadDyn, msg_time: DateTime<Utc>)
+                            msg: &CastMessage, pd: &PayloadDyn, msg_time: DateTime<Utc>)
     {
         let pd_typed: Payload::<payload::media::Status> =
             match serde_json::from_value(pd.inner.clone()) {
@@ -1587,15 +1588,16 @@ impl Stream for StatusListener {
 pub struct StatusUpdateSmallDebug<'a>(pub &'a StatusUpdate);
 pub struct StatusMessageSmallDebug<'a>(pub &'a StatusMessage);
 
-pub struct ReceiverStatusSmallDebug<'a>(pub &'a proxies::receiver::Status);
-pub struct ApplicationsSmallDebug<'a>(pub &'a [proxies::receiver::Application]);
-pub struct ApplicationSmallDebug<'a>(pub &'a proxies::receiver::Application);
-pub struct VolumeSmallDebug<'a>(pub &'a proxies::receiver::Volume);
+pub struct ReceiverStatusSmallDebug<'a>(pub &'a payload::receiver::Status);
+pub struct ApplicationsSmallDebug<'a>(pub &'a [payload::receiver::Application]);
+pub struct ApplicationSmallDebug<'a>(pub &'a payload::receiver::Application);
+pub struct VolumeSmallDebug<'a>(pub &'a payload::receiver::Volume);
 
-pub struct MediaStatusItemsSmallDebug<'a>(pub &'a [proxies::media::Status]);
-pub struct MediaStatusItemSmallDebug<'a>(pub &'a proxies::media::Status);
-pub struct MediaSmallDebug<'a>(pub &'a proxies::media::Media);
-pub struct MetadataSmallDebug<'a>(pub &'a proxies::media::Metadata);
+pub struct MediaStatusSmallDebug<'a>(pub &'a payload::media::Status);
+pub struct MediaStatusEntriesSmallDebug<'a>(pub &'a [payload::media::StatusEntry]);
+pub struct MediaStatusEntrySmallDebug<'a>(pub &'a payload::media::StatusEntry);
+pub struct MediaSmallDebug<'a>(pub &'a payload::media::Media);
+pub struct MetadataSmallDebug<'a>(pub &'a payload::media::Metadata);
 
 impl<'a> Debug for StatusUpdateSmallDebug<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1609,14 +1611,11 @@ impl<'a> Debug for StatusUpdateSmallDebug<'a> {
 impl<'a> Debug for StatusMessageSmallDebug<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0 {
-            StatusMessage::Media(ms) => {
-                f.debug_struct("StatusMessage::Media")
-                 .field("status", &MediaStatusItemsSmallDebug(&ms.status))
-                 .finish()
-            },
+            StatusMessage::Media(ms) =>
+                Debug::fmt(&MediaStatusSmallDebug(&ms), f),
 
             StatusMessage::Receiver(rs) =>
-                Debug::fmt(&ReceiverStatusSmallDebug(&rs.status), f),
+                Debug::fmt(&ReceiverStatusSmallDebug(&rs), f),
 
             _ => Debug::fmt(self, f),
         }
@@ -1625,7 +1624,7 @@ impl<'a> Debug for StatusMessageSmallDebug<'a> {
 
 impl<'a> Debug for ReceiverStatusSmallDebug<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ReceiverStatus")
+        f.debug_struct("receiver::Status")
          .field("applications", &ApplicationsSmallDebug(&self.0.applications))
          .field("volume", &VolumeSmallDebug(&self.0.volume))
          .finish()
@@ -1671,22 +1670,30 @@ impl<'a> Debug for VolumeSmallDebug<'a> {
     }
 }
 
-impl<'a> Debug for MediaStatusItemsSmallDebug<'a> {
+impl<'a> Debug for MediaStatusSmallDebug<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("media::Status")
+            .field("entries", &MediaStatusEntriesSmallDebug(&self.0.entries))
+            .finish()
+    }
+}
+
+impl<'a> Debug for MediaStatusEntriesSmallDebug<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut d = f.debug_list();
         for item in self.0 {
-            d.entry(&MediaStatusItemSmallDebug(item));
+            d.entry(&MediaStatusEntrySmallDebug(item));
         }
         d.finish()
     }
 }
 
-impl<'a> Debug for MediaStatusItemSmallDebug<'a> {
+impl<'a> Debug for MediaStatusEntrySmallDebug<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // `DebugInline` is used to override Formatter's `alternate` setting
         // (i.e. using `{:#?}`) to remove unnecessary whitespace.
 
-        f.debug_struct("MediaStatusItem")
+        f.debug_struct("MediaStatusEntry")
          .field("player_state", &self.0.player_state)
          .field("current_time",
                 &DebugInline(&format!("{:?}", &self.0.current_time)))

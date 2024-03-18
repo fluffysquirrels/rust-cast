@@ -10,6 +10,7 @@ pub mod async_client;
 pub mod cast;
 pub mod channels;
 pub mod errors;
+pub mod mdns;
 mod message;
 pub mod message_manager;
 pub mod payload;

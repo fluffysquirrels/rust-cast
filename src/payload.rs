@@ -1,13 +1,18 @@
 use crate::{
-    cast::proxies,
-    types::{AppId,
+    async_client::Result,
+    types::{AppId, AppSession,
+            EndpointId,
             MediaSessionId,
             MessageType, MessageTypeConst,
-            /* Namespace, */ NamespaceConst,
+            NamespaceConst,
             RequestId, SessionId},
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::fmt::Debug;
+use serde_with::skip_serializing_none;
+use std::{
+    borrow::Cow,
+    fmt::Debug,
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,7 +100,6 @@ pub mod heartbeat {
 }
 
 pub mod media {
-    use proxies::media::CustomData;
     use super::*;
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.media";
@@ -120,27 +124,147 @@ pub mod media {
         = "INVALID_PLAYER_STATE";
     pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageTypeConst = "INVALID_REQUEST";
 
-    #[derive(Clone, Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Status {
-        pub status: Vec<proxies::media::Status>,
+    mod shared {
+        use super::*;
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Status {
+            #[serde(rename = "status")]
+            pub entries: Vec<StatusEntry>,
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct StatusEntry {
+            pub media_session_id: i32,
+
+            pub media: Option<Media>,
+
+            pub playback_rate: f32,
+            pub player_state: String,
+            pub idle_reason: Option<String>,
+            pub current_time: Option<f32>,
+            pub current_item_id: Option<i32>,
+            pub supported_media_commands: u32,
+            pub items: Option<Vec<Item>>,
+
+            pub repeat_mode: Option<String>,
+
+            // This field seems invalid. Volume level is always 1.0 in testing.
+            // pub volume: crate::payload::receiver::Volume,
+        }
+
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Media {
+            pub content_id: String,
+
+            #[serde(default)]
+            pub stream_type: String,
+
+            pub content_type: String,
+
+            pub metadata: Option<Metadata>,
+
+            pub duration: Option<f32>,
+
+            pub content_url: Option<String>,
+
+            #[serde(default)]
+            pub custom_data: CustomData,
+        }
+
+        #[serde_with::serde_as]
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Item {
+            pub item_id: i32,
+
+            pub media: Option<Media>,
+
+            // `auto_play` seems to sometimes be serialised as a JSON string, like `"false"`.
+            // Support deserialising from a bool or string, serialise as a bool.
+            #[serde_as(as = "serde_with::PickFirst<(_, serde_with::DisplayFromStr)>")]
+
+            #[serde(rename = "autoplay")]
+            pub auto_play: bool,
+
+            #[serde(default)]
+            pub custom_data: CustomData,
+        }
+
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Metadata {
+            pub metadata_type: u32,
+            pub title: Option<String>,
+            pub series_title: Option<String>,
+            pub album_name: Option<String>,
+            pub subtitle: Option<String>,
+            pub album_artist: Option<String>,
+            pub artist: Option<String>,
+            pub composer: Option<String>,
+
+            #[serde(default)]
+            pub images: Vec<Image>,
+
+            pub release_date: Option<String>,
+            pub original_air_date: Option<String>,
+            pub creation_date_time: Option<String>,
+            pub studio: Option<String>,
+            pub location: Option<String>,
+            pub latitude: Option<f64>,
+            pub longitude: Option<f64>,
+            pub season: Option<u32>,
+            pub episode: Option<u32>,
+            pub track_number: Option<u32>,
+            pub disc_number: Option<u32>,
+            pub width: Option<u32>,
+            pub height: Option<u32>,
+        }
+
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        pub struct Image {
+            pub url: String,
+            pub width: Option<u32>,
+            pub height: Option<u32>,
+        }
+
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct MediaRequestCommon {
+            pub custom_data: CustomData,
+            pub media_session_id: MediaSessionId,
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        pub struct CustomData(pub serde_json::Value);
+
+        impl Default for CustomData {
+            fn default() -> CustomData {
+                CustomData::new()
+            }
+        }
+
+        impl CustomData {
+            pub fn new() -> CustomData {
+                CustomData(serde_json::Value::Null)
+            }
+        }
     }
-
-    #[derive(Debug, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct MediaRequestCommon {
-        pub custom_data: CustomData,
-        pub media_session_id: MediaSessionId,
-    }
-
-
+    pub use self::shared::*;
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct LoadRequest {
         pub session_id: SessionId,
 
-        pub media: proxies::media::Media,
+        pub media: Media,
         pub current_time: f64,
 
         #[serde(default)]
@@ -245,6 +369,8 @@ pub mod receiver {
     use super::*;
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.receiver";
+    pub const CHANNEL_NAMESPACE_TYPED: AppNamespace =
+        AppNamespace::from_const("urn:x-cast:com.google.cast.receiver");
 
     pub const MESSAGE_REQUEST_TYPE_LAUNCH: &str = "LAUNCH";
     pub const MESSAGE_REQUEST_TYPE_STOP: &str = "STOP";
@@ -255,11 +381,119 @@ pub mod receiver {
     pub const MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
     pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
 
-    #[derive(Clone, Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct Status {
-        pub status: proxies::receiver::Status,
+    mod shared {
+        use super::*;
+
+        #[derive(Clone, Deserialize, Debug)]
+        #[serde(rename_all = "camelCase")]
+        pub struct StatusWrapper {
+            pub status: Status,
+        }
+
+        #[derive(Clone, Deserialize, Debug)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Status {
+            #[serde(default)]
+            pub applications: Vec<Application>,
+
+            #[serde(default)]
+            pub is_active_input: bool,
+
+            #[serde(default)]
+            pub is_stand_by: bool,
+
+            /// Volume parameters of the currently active cast device.
+            pub volume: Volume,
+
+            // pub user_eq: ??,
+        }
+
+        #[derive(Clone, Deserialize, Debug)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Application {
+            pub app_id: String,
+            pub session_id: String,
+            pub transport_id: String,
+
+            #[serde(default)]
+            pub namespaces: Vec<AppNamespace>,
+            pub display_name: String,
+            pub status_text: String,
+            pub app_type: String,
+            pub icon_url: String,
+            pub is_idle_screen: bool,
+            pub launched_from_cloud: bool,
+            pub universal_app_id: String,
+        }
+
+        impl Application {
+            pub fn has_namespace(&self, ns: &str) -> bool {
+                self.namespaces.iter().any(|app_ns| app_ns == ns)
+            }
+
+            pub fn to_app_session(&self, receiver_destination_id: EndpointId)
+                                  -> Result<AppSession> {
+                Ok(AppSession {
+                    receiver_destination_id,
+                    app_destination_id: self.transport_id.clone(),
+                    session_id: self.session_id.clone(),
+                })
+            }
+        }
+
+        #[derive(Clone, Deserialize, Debug, Eq, PartialEq)]
+        #[serde(rename_all = "camelCase")]
+        pub struct AppNamespace {
+            pub name: Cow<'static, str>,
+        }
+
+        impl AppNamespace {
+            pub const fn from_const(s: &'static str) -> AppNamespace {
+                AppNamespace {
+                    name: Cow::Borrowed(s),
+                }
+            }
+        }
+
+        impl From<&str> for AppNamespace {
+            fn from(s: &str) -> AppNamespace {
+                AppNamespace::from(s.to_string())
+            }
+        }
+
+        impl From<String> for AppNamespace {
+            fn from(s: String) -> AppNamespace {
+                AppNamespace { name: s.into() }
+            }
+        }
+
+        impl PartialEq<str> for AppNamespace {
+            fn eq(&self, other: &str) -> bool {
+                self.name == other
+            }
+        }
+
+        impl PartialEq<AppNamespace> for str {
+            fn eq(&self, other: &AppNamespace) -> bool {
+                self == other.name
+            }
+        }
+
+        /// Structure that describes possible cast device volume options.
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Volume {
+            /// Volume level.
+            pub level: Option<f32>,
+            /// Mute/unmute state.
+            pub muted: Option<bool>,
+
+            pub control_type: Option<String>,
+            pub step_interval: Option<f32>,
+        }
     }
+    pub use self::shared::*;
+
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -272,7 +506,7 @@ pub mod receiver {
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
-    pub struct GetStatusResponse(pub Status);
+    pub struct GetStatusResponse(pub StatusWrapper);
 
     impl ResponseInner for GetStatusResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
@@ -298,7 +532,7 @@ pub mod receiver {
             rename_all = "camelCase")]
     pub enum LaunchResponse {
         #[serde(rename = "RECEIVER_STATUS")]
-        Ok(Status),
+        Ok(StatusWrapper),
 
         #[serde(rename = "LAUNCH_ERROR")]
         Error {
@@ -338,7 +572,7 @@ pub mod receiver {
             rename_all = "camelCase")]
     pub enum StopResponse {
         #[serde(rename = "RECEIVER_STATUS")]
-        Ok(Status),
+        Ok(StatusWrapper),
 
         #[serde(rename = "INVALID_REQUEST")]
         InvalidRequest {
@@ -359,7 +593,7 @@ pub mod receiver {
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct SetVolumeRequest {
-        pub volume: proxies::receiver::Volume,
+        pub volume: Volume,
     }
 
     impl RequestInner for SetVolumeRequest {
@@ -372,7 +606,7 @@ pub mod receiver {
             rename_all = "camelCase")]
     pub enum SetVolumeResponse {
         #[serde(rename = "RECEIVER_STATUS")]
-        Ok(Status),
+        Ok(StatusWrapper),
 
         #[serde(rename = "INVALID_REQUEST")]
         InvalidRequest {

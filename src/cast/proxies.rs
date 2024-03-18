@@ -534,12 +534,6 @@ pub mod receiver {
         pub reason: Option<String>,
     }
 
-
-    use crate::{
-        async_client::Result,
-        types::{AppSession, EndpointId},
-    };
-
     impl From<&str> for AppNamespace {
         fn from(s: &str) -> AppNamespace {
             AppNamespace::from(s.to_string())
@@ -549,21 +543,6 @@ pub mod receiver {
     impl From<String> for AppNamespace {
         fn from(s: String) -> AppNamespace {
             AppNamespace { name: s }
-        }
-    }
-
-    impl Application {
-        pub fn has_namespace(&self, ns: &str) -> bool {
-            self.namespaces.iter().any(|app_ns| app_ns.name == ns)
-        }
-
-        pub fn to_app_session(&self, receiver_destination_id: EndpointId)
-        -> Result<AppSession> {
-            Ok(AppSession {
-                receiver_destination_id,
-                app_destination_id: self.transport_id.clone(),
-                session_id: self.session_id.clone(),
-            })
         }
     }
 }
