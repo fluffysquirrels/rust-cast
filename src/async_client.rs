@@ -88,8 +88,7 @@ pub struct LoadMediaArgs {
     /// None to use default.
     pub preload_time: Option<f64>,
 
-    // TODO: Decide whether to expose custom data.
-    // custom_data: serde_json::Value,
+    pub custom_data: CustomData,
 
     // TODO: Add defaults or builder.
 }
@@ -289,6 +288,7 @@ impl Config {
     }
 }
 
+// Public methods
 impl Client {
     pub async fn reconnect(&mut self) -> Result<()> {
         todo!(
@@ -435,7 +435,7 @@ impl Client {
             media: load_args.media,
 
             current_time: load_args.current_time,
-            custom_data: CustomData::default(),
+            custom_data: load_args.custom_data,
             autoplay: load_args.autoplay,
             preload_time: load_args.preload_time.unwrap_or(10_f64),
         };

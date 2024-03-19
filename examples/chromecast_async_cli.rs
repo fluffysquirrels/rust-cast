@@ -306,6 +306,7 @@ async fn demo_main(mut client: Client, sub_args: DemoArgs) -> Result<()> {
         current_time: 0_f64,
         autoplay: true,
         preload_time: None, // Use default.
+        custom_data: payload::media::CustomData::default(),
     };
 
     let media_load_res = client.media_load(app_session.clone(), media).await?;
