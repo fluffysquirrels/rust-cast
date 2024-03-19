@@ -306,6 +306,103 @@ pub mod media {
     }
     pub use self::shared::*;
 
+    pub mod small_debug {
+        use crate::util::fmt::DebugInline;
+        use super::*;
+
+        pub struct MediaStatus<'a>(pub &'a super::Status);
+        pub struct MediaStatusEntries<'a>(pub &'a [super::StatusEntry]);
+        pub struct MediaStatusEntry<'a>(pub &'a super::StatusEntry);
+        pub struct Media<'a>(pub &'a super::Media);
+        pub struct Metadata<'a>(pub &'a super::Metadata);
+
+        impl<'a> Debug for MediaStatus<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.debug_struct("media::Status")
+                    .field("entries", &MediaStatusEntries(&self.0.entries))
+                    .finish()
+            }
+        }
+
+        impl<'a> Debug for MediaStatusEntries<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let mut d = f.debug_list();
+                for item in self.0 {
+                    d.entry(&MediaStatusEntry(item));
+                }
+                d.finish()
+            }
+        }
+
+        impl<'a> Debug for MediaStatusEntry<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                // `DebugInline` is used to override Formatter's `alternate` setting
+                // (i.e. using `{:#?}`) to remove unnecessary whitespace.
+
+                f.debug_struct("MediaStatusEntry")
+                    .field("player_state", &self.0.player_state)
+                    .field("current_time",
+                           &DebugInline(&format!("{:?}", &self.0.current_time)))
+                    .field("media", &self.0.media.as_ref().map(|m| Media(m)))
+                    .field("idle_reason",
+                           &DebugInline(&format!("{:?}", &self.0.idle_reason)))
+                    .field("media_session_id", &self.0.media_session_id)
+                    .field("current_item_id",
+                           &DebugInline(&format!("{:?}", &self.0.current_item_id)))
+                    .field("repeat_mode", &DebugInline(&format!("{:?}", &self.0.repeat_mode)))
+                // .field("items", &self.0.items)
+
+                // Volume level seems to be always 1.0, no point showing it.
+                // .field("volume", &Volume(&self.0.volume))
+
+                    .finish()
+                // .finish_non_exhaustive()
+            }
+        }
+
+        impl<'a> Debug for Media<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.debug_struct("Media")
+                    .field("content_id", &self.0.content_id)
+                    .field("content_url", &self.0.content_url)
+                    .field("stream_type", &self.0.stream_type)
+                    .field("content_type", &self.0.content_type)
+                    .field("duration",
+                           // Override formatter's `alternate` setting (i.e. using `{:#?}`)
+                           // to remove unnecessary whitespace.
+                           &DebugInline(&format!("{:?}", &self.0.duration)))
+                    .field("metadata", &self.0.metadata.as_ref().map(|m| Metadata(m)))
+                    .finish()
+                // .finish_non_exhaustive()
+            }
+        }
+
+        impl<'a> Debug for Metadata<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let mut s = f.debug_struct("Metadata");
+
+                opt_field(&mut s, "title", &self.0.title);
+                opt_field(&mut s, "series_title", &self.0.series_title);
+                opt_field(&mut s, "subtitle", &self.0.subtitle);
+                opt_field(&mut s, "season", &self.0.season);
+                opt_field(&mut s, "episode", &self.0.episode);
+
+                s.finish()
+                // s.finish_non_exhaustive()
+            }
+        }
+
+        fn opt_field<'a, 'b: 'a>(debug_struct: &mut std::fmt::DebugStruct<'a, 'b>,
+                                 name: &str, value: &Option<impl Debug>)
+        {
+            let Some(ref value) = value else {
+                return;
+            };
+
+            debug_struct.field(name, value);
+        }
+    }
+
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct LoadRequest {
@@ -541,6 +638,62 @@ pub mod receiver {
     }
     pub use self::shared::*;
 
+    pub mod small_debug {
+        use super::*;
+
+        pub struct ReceiverStatus<'a>(pub &'a super::Status);
+        pub struct Applications<'a>(pub &'a [super::Application]);
+        pub struct Application<'a>(pub &'a super::Application);
+        pub struct Volume<'a>(pub &'a super::Volume);
+
+        impl<'a> Debug for ReceiverStatus<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.debug_struct("receiver::Status")
+                    .field("applications", &Applications(&self.0.applications))
+                    .field("volume", &Volume(&self.0.volume))
+                    .finish()
+                // .finish_non_exhaustive()
+            }
+        }
+
+        impl<'a> Debug for Applications<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let mut d = f.debug_list();
+                for item in self.0 {
+                    d.entry(&Application(item));
+                }
+                d.finish()
+            }
+        }
+
+        impl<'a> Debug for Application<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.debug_struct("Application")
+                // .field("app_id", &self.0.app_id)
+                    .field("session_id", &self.0.session_id)
+                // .field("transport_id", &self.0.transport_id)
+                    .field("display_name", &self.0.display_name)
+                    .field("status_text", &self.0.status_text)
+                // .field("namespaces", &todo)
+                    .finish()
+                // .finish_non_exhaustive()
+            }
+        }
+
+        impl<'a> Debug for Volume<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "Volume {{ level: {level}, muted: {muted} }}",
+                       level = match self.0.level {
+                           None => "None".to_string(),
+                           Some(l) => format!("{l:.2}"),
+                       },
+                       muted = match self.0.muted {
+                           None => "None".to_string(),
+                           Some(m) => format!("{m}"),
+                       })
+            }
+        }
+    }
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]

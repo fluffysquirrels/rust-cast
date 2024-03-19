@@ -135,7 +135,7 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
                     // println!(" # listener status update = {update:#?}\n\n");
                     println!(" # listener status update (small) = {update_small:#?}\n\
                               ====\n\n",
-                             update_small = client::StatusUpdateSmallDebug(&update));
+                             update_small = client::small_debug::StatusUpdate(&update));
 
                     // TODO: if receiver app changes and has media namespace, get status.
                     // TODO: Support this optionally in Client?
@@ -162,7 +162,7 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
 async fn status_single(client: &mut Client) -> Result<()> {
     let receiver_status = client.receiver_status().await?;
     // println!("receiver_status = {receiver_status:#?}");
-    let receiver_status_small = client::ReceiverStatusSmallDebug(&receiver_status);
+    let receiver_status_small = payload::receiver::small_debug::ReceiverStatus(&receiver_status);
     println!("receiver_status (small) = {receiver_status_small:#?}");
 
     for media_app in
@@ -173,7 +173,7 @@ async fn status_single(client: &mut Client) -> Result<()> {
         client.connection_connect(session.app_destination_id.clone()).await?;
         let media_status = client.media_status(session, /* media_session_id: */ None).await?;
         // println!("media_status = {media_status:#?}");
-        let media_status_small = client::MediaStatusSmallDebug(&media_status);
+        let media_status_small = payload::media::small_debug::MediaStatus(&media_status);
         println!("media_status (small) = {media_status_small:#?}");
     }
 
