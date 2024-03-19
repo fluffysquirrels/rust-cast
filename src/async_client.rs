@@ -16,7 +16,7 @@ use crate::{
             /* MessageType, */ MessageTypeConst,
             /* Namespace, */ NamespaceConst,
             /* SessionId */},
-    util::{named, fmt::DebugInline},
+    util::{named},
 };
 use futures::{
     future::Either,

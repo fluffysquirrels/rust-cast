@@ -64,7 +64,7 @@ impl TargetArgs {
 
         Ok(match target {
             Target::SocketAddr(sa) => sa,
-            Target::Mdns(mt) => mdns::resolve_target(mt).await?,
+            Target::Mdns(mt) => mdns::resolve_target(&mt).await?.addr,
         })
     }
 }
