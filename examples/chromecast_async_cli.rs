@@ -47,7 +47,12 @@ struct DemoArgs {
 struct SetVolumeArgs {
     /// Set volume level as a float between 0.0 and 1.0
     #[arg(long)]
-    level: f32,
+    level: Option<f32>,
+
+    #[arg(long,
+          action = clap::ArgAction::Set, default_missing_value = "true",
+          require_equals = true, num_args = 0..=1)]
+    mute: Option<bool>,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -201,15 +206,26 @@ async fn app_stop_main(mut client: Client) -> Result<()> {
 }
 
 async fn set_volume_main(mut client: Client, sub_args: SetVolumeArgs) -> Result<()> {
-    let level = sub_args.level;
+    let level: Option<f32> = sub_args.level;
 
-    if level < 0.0 || level > 1.0 {
-        bail!("Bad volume level {level}; it must be between 0.0 and 1.0");
+    match level {
+        Some(level) if level < 0.0 || level > 1.0 =>
+            bail!("Bad volume level {level}; it must be between 0.0 and 1.0 inclusive"),
+        _ => (),
+    };
+
+    let mute: Option<bool> = sub_args.mute;
+
+    let num_args = (level.is_some() as u8) + (mute.is_some() as u8);
+    if num_args != 1 {
+        bail!("Exactly one of the arguments `--level` or `--mute` must be given.\n\
+               The Chromecast does not set `mute` when both `level` and `mute` are supplied.\n\
+               {num_args} arguments were supplied.");
     }
 
     let volume = payload::receiver::Volume {
-        level: Some(level),
-        muted: None,
+        level,
+        muted: mute,
 
         control_type: None,
         step_interval: None,
