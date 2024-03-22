@@ -234,7 +234,7 @@ mod test {
 
         let id_uuid = "3123456789-abcd-0123-4567-89abcdef0123";
         let id = id_uuid.replace('-', "");
-        let srv_name = format!("Chromecast-{id}.{MDNS_SERVICE_NAME}");
+        let srv_name = format!("Chromecast-{id}.{SERVICE_NAME}");
         let a_name = format!("{id_uuid}.local");
 
         let ip = Ipv4Addr::from([192,168,17,42]);
@@ -246,7 +246,7 @@ mod test {
         let resp = Response {
             answers: vec![
                 Record {
-                    name: MDNS_SERVICE_NAME.to_string(),
+                    name: SERVICE_NAME.to_string(),
                     kind: RecordKind::PTR(srv_name.clone()),
                     class, ttl
                 },
@@ -293,16 +293,15 @@ mod test {
         let clients = clients_from_mdns_response(&resp)?;
         println!("clients = {clients:#?}");
 
-        let client_vec = clients.iter().collect::<Vec<_>>();
-        assert_eq!(client_vec.len(), 1);
+        assert_eq!(clients.len(), 1);
 
-        let client = &client_vec[0];
+        let client = &clients[0];
 
-        assert_eq!(client.0, &ClientSrvName(srv_name));
-        assert_eq!(client.1.addr, SocketAddr::from((ip, port)));
-        assert_eq!(client.1.display_name, friendly_name);
-        assert_eq!(client.1.app_name, Some(app_name));
-        assert_eq!(client.1.id, Some(id));
+        assert_eq!(client.service_host, srv_name);
+        assert_eq!(client.addr, SocketAddr::from((ip, port)));
+        assert_eq!(client.display_name, friendly_name);
+        assert_eq!(client.app_name, Some(app_name));
+        assert_eq!(client.uuid, Some(id));
 
         Ok(())
     }

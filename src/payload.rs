@@ -11,6 +11,7 @@ use serde_with::skip_serializing_none;
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Display},
+    sync::atomic::{AtomicI32, Ordering},
 };
 
 /// i32 that represents a request_id in the Chromecast protocol.
@@ -20,8 +21,16 @@ use std::{
 #[serde(transparent)]
 pub struct RequestId(i32);
 
+pub(crate) struct RequestIdGen(AtomicI32);
+
 impl RequestId {
-    pub const BROADCAST: RequestId = RequestId(0);
+    pub const BROADCAST: RequestId = RequestId(Self::BROADCAST_I32);
+    const BROADCAST_I32: i32 = 0;
+}
+
+impl RequestIdGen {
+    /// Some broadcasts have `request_id` 0, so skip that.
+    const INITIAL_I32: i32 = RequestId::BROADCAST_I32 + 1;
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -59,7 +68,7 @@ impl RequestId {
         self.0
     }
 
-    pub fn rpc_id_from(n: i32) -> RequestId {
+    fn rpc_id_from(n: i32) -> RequestId {
         let id = RequestId(n);
 
         if id.is_broadcast() {
@@ -87,6 +96,24 @@ impl Into<i32> for RequestId {
 impl Display for RequestId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         Display::fmt(&self.0, f)
+    }
+}
+
+impl RequestIdGen {
+    pub(crate) fn new() -> RequestIdGen {
+        RequestIdGen(AtomicI32::new(Self::INITIAL_I32))
+    }
+
+    pub(crate) fn take_next(&self) -> RequestId {
+        loop {
+            let id = self.0.fetch_add(1, Ordering::SeqCst);
+            if id == RequestId::BROADCAST_I32 {
+                // Receivers use 0 for broadcast messages, take the next value.
+                continue;
+            }
+
+            return RequestId::rpc_id_from(id);
+        }
     }
 }
 
@@ -820,5 +847,35 @@ pub mod receiver {
             MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn request_id_gen_default() {
+        let gen = RequestIdGen::new();
+        assert_eq!(gen.take_next().0, 1);
+        assert_eq!(gen.take_next().0, 2);
+        assert_eq!(gen.take_next().0, 3);
+    }
+
+    #[test]
+    fn request_id_gen_overflow() {
+        let gen = RequestIdGen(AtomicI32::new(i32::MAX - 1));
+        assert_eq!(gen.take_next().0, i32::MAX - 1);
+        assert_eq!(gen.take_next().0, i32::MAX);
+        assert_eq!(gen.take_next().0, i32::MIN);
+        assert_eq!(gen.take_next().0, i32::MIN + 1);
+    }
+
+    #[test]
+    fn request_id_gen_skip_0() {
+        let gen = RequestIdGen(AtomicI32::new(-1));
+        assert_eq!(gen.take_next().0, -1);
+        assert_eq!(gen.take_next().0,  1);
+        assert_eq!(gen.take_next().0,  2);
     }
 }

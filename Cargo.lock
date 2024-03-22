@@ -1429,6 +1429,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "dns-parser",
  "docopt",
  "env_logger",
  "function_name",

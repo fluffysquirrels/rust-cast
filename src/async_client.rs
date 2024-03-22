@@ -6,7 +6,7 @@ use crate::{
         CastMessage,
         CastMessagePayload,
     },
-    payload::{self, Payload, PayloadDyn, RequestId, RequestInner, ResponseInner,
+    payload::{self, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner, ResponseInner,
               media::{CustomData, MediaRequestCommon}},
     types::{AppId, /* AppIdConst, */
             AppSession,
@@ -32,7 +32,7 @@ use std::{
     fmt::{self, Debug},
     net::{IpAddr, SocketAddr},
     pin::Pin,
-    sync::{Arc, atomic::{AtomicI32, AtomicUsize, Ordering}},
+    sync::{Arc, atomic::{AtomicUsize, Ordering}},
     task::{Context, Poll},
 };
 use tokio::{
@@ -55,7 +55,7 @@ pub struct Client {
 
     task_cmd_tx: mpsc::Sender::<TaskCmd>,
 
-    next_request_id: AtomicI32,
+    request_id_gen: RequestIdGen,
     next_command_id: AtomicUsize,
 
     shared: Arc<Shared>,
@@ -274,9 +274,7 @@ impl Config {
             task_join_handle,
             task_cmd_tx,
 
-            // Some broadcasts have `request_id` 0, so don't re-use that.
-            next_request_id: AtomicI32::new(1),
-
+            request_id_gen: RequestIdGen::new(),
             next_command_id: AtomicUsize::new(1),
 
             shared,
@@ -714,15 +712,7 @@ impl Client {
     }
 
     fn take_request_id(&self) -> RequestId {
-        loop {
-            let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
-            if id == RequestId::BROADCAST.inner() {
-                // Receivers use 0 for broadcast messages, take the next value.
-                continue;
-            }
-
-            return RequestId::rpc_id_from(id);
-        }
+        self.request_id_gen.take_next()
     }
 
     fn take_command_id(&self) -> CommandId {
