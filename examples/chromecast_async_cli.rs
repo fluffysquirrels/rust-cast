@@ -32,6 +32,7 @@ enum Command {
     Heartbeat,
     Pause,
     Play,
+    Seek(SeekArgs),
     SetVolume(SetVolumeArgs),
     Status(StatusArgs),
     Stop,
@@ -68,6 +69,15 @@ struct StatusArgs {
     poll: bool,
 }
 
+#[derive(clap::Args, Clone, Debug)]
+struct SeekArgs {
+    #[arg(long)]
+    time: Option<f32>,
+
+    #[arg(long, value_enum)]
+    resume_state: Option<payload::media::ResumeState>,
+}
+
 const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
 
 
@@ -86,24 +96,27 @@ async fn main() -> Result<()> {
         addr,
         sender: None, // Use default
     };
-    let client = config.connect().await?;
+    let mut client = config.connect().await?;
 
     match args.command {
-        Command::AppStop => app_stop_main(client).await?,
-        Command::Demo(sub_args) => demo_main(client, sub_args).await?,
-        Command::Heartbeat => heartbeat_main(client).await?,
-        Command::Pause => media_pause_main(client).await?,
-        Command::Play => media_play_main(client).await?,
-        Command::SetVolume(sub_args) => set_volume_main(client, sub_args).await?,
-        Command::Status(sub_args) => status_main(client, sub_args).await?,
-        Command::Stop => media_stop_main(client).await?,
+        Command::AppStop => app_stop_main(&mut client).await?,
+        Command::Demo(sub_args) => demo_main(&mut client, sub_args).await?,
+        Command::Heartbeat => heartbeat_main(&mut client).await?,
+        Command::Pause => media_pause_main(&mut client).await?,
+        Command::Play => media_play_main(&mut client).await?,
+        Command::Seek(sub_args) => media_seek_main(&mut client, sub_args).await?,
+        Command::SetVolume(sub_args) => set_volume_main(&mut client, sub_args).await?,
+        Command::Status(sub_args) => status_main(&mut client, sub_args).await?,
+        Command::Stop => media_stop_main(&mut client).await?,
     };
+
+    client.close().await?;
 
     Ok(())
 }
 
-async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
-    status_single(&mut client).await?;
+async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
+    status_single(client).await?;
 
     if sub_args.follow {
         enum Event {
@@ -134,7 +147,7 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
         while let Some(event) = merged.next().await {
             match event {
                 Event::PollStatus => {
-                    status_single(&mut client).await?;
+                    status_single(client).await?;
                 },
                 Event::Update(update) => {
                     // println!(" # listener status update = {update:#?}\n\n");
@@ -159,8 +172,6 @@ async fn status_main(mut client: Client, sub_args: StatusArgs) -> Result<()> {
         }
     }
 
-    client.close().await?;
-
     Ok(())
 }
 
@@ -177,15 +188,13 @@ async fn status_single(client: &mut Client) -> Result<()> {
         let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
         client.connection_connect(session.app_destination_id.clone()).await?;
         let media_status = client.media_status(session, /* media_session_id: */ None).await?;
-        // println!("media_status = {media_status:#?}");
-        let media_status_small = payload::media::small_debug::MediaStatus(&media_status);
-        println!("media_status (small) = {media_status_small:#?}");
+        print_media_status(&media_status);
     }
 
     Ok(())
 }
 
-async fn app_stop_main(mut client: Client) -> Result<()> {
+async fn app_stop_main(client: &mut Client) -> Result<()> {
     let initial_status = client.receiver_status().await?;
 
     println!("initial_status = {initial_status:#?}");
@@ -201,11 +210,10 @@ async fn app_stop_main(mut client: Client) -> Result<()> {
 
     println!("stop_status = {stop_status:#?}");
 
-    client.close().await?;
     Ok(())
 }
 
-async fn set_volume_main(mut client: Client, sub_args: SetVolumeArgs) -> Result<()> {
+async fn set_volume_main(client: &mut Client, sub_args: SetVolumeArgs) -> Result<()> {
     let level: Option<f32> = sub_args.level;
 
     match level {
@@ -233,70 +241,43 @@ async fn set_volume_main(mut client: Client, sub_args: SetVolumeArgs) -> Result<
     let status = client.receiver_set_volume(RECEIVER_ID.to_string(), volume).await?;
     println!("status = {status:#?}");
 
-    client.close().await?;
-
     Ok(())
 }
 
-async fn media_pause_main(mut client: Client) -> Result<()> {
-    let media_session = get_media_session(&mut client).await?;
+async fn media_pause_main(client: &mut Client) -> Result<()> {
+    let media_session = get_media_session(client).await?;
     let media_status = client.media_pause(media_session).await?;
-    println!("media_status = {media_status:#?}");
-    client.close().await?;
+    print_media_status(&media_status);
     Ok(())
 }
 
-async fn media_play_main(mut client: Client) -> Result<()> {
-    let media_session = get_media_session(&mut client).await?;
+async fn media_play_main(client: &mut Client) -> Result<()> {
+    let media_session = get_media_session(client).await?;
     let media_status = client.media_play(media_session).await?;
-    println!("media_status = {media_status:#?}");
-    client.close().await?;
+    print_media_status(&media_status);
     Ok(())
 }
 
-async fn media_stop_main(mut client: Client) -> Result<()> {
-    let media_session = get_media_session(&mut client).await?;
+async fn media_stop_main(client: &mut Client) -> Result<()> {
+    let media_session = get_media_session(client).await?;
     let media_status = client.media_stop(media_session).await?;
-    println!("media_status = {media_status:#?}");
-    client.close().await?;
+    print_media_status(&media_status);
     Ok(())
 }
 
-#[named]
-async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
-    const FUNCTION_PATH: &str = function_path!();
-
-    let receiver_status = client.receiver_status().await?;
-
-    let Some(media_app)
-        = receiver_status.applications.iter()
-            .find(|app| app.has_namespace(MEDIA_NS)) else
-    {
-        bail!("{FUNCTION_PATH}: No media app found.\n\
-               _ receiver_status = {receiver_status:#?}");
-    };
-
-    let app_session = media_app.to_app_session(RECEIVER_ID.to_string())?;
-    client.connection_connect(app_session.app_destination_id.clone()).await?;
-
-    let media_status = client.media_status(app_session.clone(),
-                                           /* media_session_id: */ None).await?;
-
-    let Some(media_session_id) =
-        media_status.entries.first()
-            .map(|s| s.media_session_id) else
-    {
-        bail!("{FUNCTION_PATH}: No media status entry\n\
-               _ receiver_status = {media_status:#?}");
-    };
-
-    Ok(MediaSession {
-        app_session,
-        media_session_id,
-    })
+async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> {
+    let media_session = get_media_session(client).await?;
+    let media_status = client.media_seek(media_session,
+                                         sub_args.time,
+                                         sub_args.resume_state,
+                                         payload::media::CustomData::default()
+                       ).await?;
+    print_media_status(&media_status);
+    Ok(())
 }
 
-async fn demo_main(mut client: Client, sub_args: DemoArgs) -> Result<()> {
+
+async fn demo_main(client: &mut Client, sub_args: DemoArgs) -> Result<()> {
     let status = client.receiver_status().await?;
     println!("status = {status:#?}");
 
@@ -349,18 +330,55 @@ async fn demo_main(mut client: Client, sub_args: DemoArgs) -> Result<()> {
         println!("receiver_status_2 = {receiver_status_2:#?}");
     }
 
-    client.close().await?;
     Ok(())
 }
 
-async fn heartbeat_main(mut client: Client) -> Result<()>
+async fn heartbeat_main(client: &mut Client) -> Result<()>
 {
     client.connection_connect(RECEIVER_ID.to_string()).await?;
 
     pause().await?;
 
-    client.close().await?;
     Ok(())
+}
+
+#[named]
+async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
+    const FUNCTION_PATH: &str = function_path!();
+
+    let receiver_status = client.receiver_status().await?;
+
+    let Some(media_app)
+        = receiver_status.applications.iter()
+            .find(|app| app.has_namespace(MEDIA_NS)) else
+    {
+        bail!("{FUNCTION_PATH}: No media app found.\n\
+               _ receiver_status = {receiver_status:#?}");
+    };
+
+    let app_session = media_app.to_app_session(RECEIVER_ID.to_string())?;
+    client.connection_connect(app_session.app_destination_id.clone()).await?;
+
+    let media_status = client.media_status(app_session.clone(),
+                                           /* media_session_id: */ None).await?;
+
+    let Some(media_session_id) =
+        media_status.entries.first()
+            .map(|s| s.media_session_id) else
+    {
+        bail!("{FUNCTION_PATH}: No media status entry\n\
+               _ receiver_status = {media_status:#?}");
+    };
+
+    Ok(MediaSession {
+        app_session,
+        media_session_id,
+    })
+}
+
+fn print_media_status(media_status: &payload::media::Status) {
+    let media_status_small = payload::media::small_debug::MediaStatus(media_status);
+    println!("media_status = {media_status_small:#?}");
 }
 
 async fn sleep(dur: std::time::Duration) {

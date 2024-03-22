@@ -60,6 +60,7 @@ pub trait ResponseInner: Debug + DeserializeOwned
     const TYPE_NAMES: &'static [MessageTypeConst];
 }
 
+// TODO: Update USER_AGENT?
 pub const USER_AGENT: &str = "RustCast; https://github.com/azasypkin/rust-cast";
 
 
@@ -515,6 +516,31 @@ pub mod media {
             MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
+    }
+
+
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SeekRequest {
+        pub media_session_id: MediaSessionId,
+        pub current_time: Option<f32>,
+        pub resume_state: Option<ResumeState>,
+        pub custom_data: CustomData,
+    }
+
+    impl RequestInner for SeekRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_SEEK;
+    }
+
+    #[derive(Clone, Copy, Debug, Serialize)]
+    #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+    pub enum ResumeState {
+        #[serde(rename = "PLAYBACK_PAUSE")]
+        Pause,
+
+        #[serde(rename = "PLAYBACK_START")]
+        Start,
     }
 
 

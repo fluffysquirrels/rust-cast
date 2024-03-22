@@ -469,6 +469,35 @@ impl Client {
     }
 
     #[named]
+    pub async fn media_seek(&mut self,
+                            media_session: MediaSession,
+                            current_time: Option<f32>,
+                            resume_state: Option<payload::media::ResumeState>,
+                            custom_data: CustomData)
+    -> Result<payload::media::Status>
+    {
+        let payload_req = payload::media::SeekRequest {
+            media_session_id: media_session.media_session_id,
+            current_time,
+            resume_state,
+            custom_data,
+        };
+
+        let resp: Payload<payload::media::GetStatusResponse>
+            = self.json_rpc(payload_req,
+                            media_session.app_session.app_destination_id.clone()).await?;
+
+        let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response from seek request\n\
+                   _ response         = {resp:#?}\n\
+                   _ media_session    = {media_session:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
+    #[named]
     async fn simple_media_request<Req>(
         &mut self,
         media_session: MediaSession,
