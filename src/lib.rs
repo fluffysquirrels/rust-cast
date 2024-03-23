@@ -8,32 +8,36 @@ pub use util::named;
 pub mod args;
 pub mod async_client;
 pub mod cast;
-pub mod channels;
-pub mod errors;
+// pub mod channels;
+// pub mod errors;
 pub mod mdns;
 mod message;
-pub mod message_manager;
+// pub mod message_manager;
 pub mod payload;
 pub mod types;
-mod utils;
+// mod utils;
 
 // use std::{borrow::Cow, net::TcpStream, sync::Arc};
-use std::{net::TcpStream};
+// use std::{net::TcpStream};
 
 
-use channels::{
+/* use channels::{
     connection::{ConnectionChannel, ConnectionResponse},
     heartbeat::{HeartbeatChannel, HeartbeatResponse},
     media::{MediaChannel, MediaResponse},
     receiver::{ReceiverChannel, ReceiverResponse},
-};
+}; */
 
 // use errors::Error;
 
-use message_manager::{CastMessage, MessageManager};
+// use message_manager::{CastMessage, MessageManager};
 
 // use rustls::{ClientConnection, OwnedTrustAnchor, RootCertStore, StreamOwned};
-use rustls::{ClientConnection, StreamOwned};
+// use rustls::{ClientConnection, StreamOwned};
+
+
+#[cfg(any())] // Disabled. TODO: Rewrite sync Client to use a common base with async_client.
+mod boop {
 
 #[cfg(feature = "thread_safe")]
 type Lrc<T> = std::sync::Arc<T>;
@@ -89,10 +93,6 @@ pub(crate) mod tests {
         is_send::<CastDevice>();
     }
 }
-
-
-#[cfg(any())] // Disabled. TODO: Rewrite sync Client to use a common base with async_client.
-mod boop {
 
 const DEFAULT_SENDER_ID: &str = "sender-0";
 const DEFAULT_RECEIVER_ID: &str = "receiver-0";

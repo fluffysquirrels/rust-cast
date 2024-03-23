@@ -1,3 +1,5 @@
+// TODO: Move these to `src/payload.rs`
+
 pub type Namespace = String;
 pub type NamespaceConst = &'static str;
 
