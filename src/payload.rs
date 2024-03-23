@@ -202,29 +202,131 @@ pub mod media {
     mod shared {
         use super::*;
 
+        #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
+        pub struct Image {
+            pub url: String,
+            pub width: Option<u32>,
+            pub height: Option<u32>,
+        }
+
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Media {
+            /// Typically a URL for the content.
+            pub content_id: String,
+            pub content_type: MimeType,
+
+            /// If missing, `content_id` is used as a URL.
+            pub content_url: Option<String>,
+
+            #[serde(default)]
+            pub custom_data: CustomData,
+
+            pub duration: Option<Seconds>,
+            // TODO: pub media_category: Option<MediaCategory>,
+            pub metadata: Option<Metadata>,
+            pub stream_type: Option<StreamType>,
+            pub text_track_style: Option<TextTrackStyle>,
+            pub tracks: Option<Vec<Track>>,
+        }
+
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct Metadata {
+            pub metadata_type: u32,
+
+            pub album_artist: Option<String>,
+            pub album_name: Option<String>,
+            pub artist: Option<String>,
+            pub composer: Option<String>,
+            pub creation_date_time: Option<String>,
+            pub disc_number: Option<u32>,
+            pub episode: Option<u32>,
+            pub height: Option<u32>,
+
+            #[serde(default)]
+            pub images: Vec<Image>,
+
+            pub latitude: Option<f64>,
+            pub location: Option<String>,
+            pub longitude: Option<f64>,
+            pub original_air_date: Option<String>,
+            pub release_date: Option<String>,
+            pub season: Option<u32>,
+            pub series_title: Option<String>,
+            pub studio: Option<String>,
+            pub subtitle: Option<String>,
+            pub title: Option<String>,
+            pub track_number: Option<u32>,
+            pub width: Option<u32>,
+        }
+
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct QueueData {
+            pub items: Option<Vec<QueueItem>>,
+            pub name: Option<String>,
+            pub repeat_mode: Option<RepeatMode>,
+            pub shuffle: Option<bool>,
+            pub start_index: Option<u32>,
+            pub start_time: Option<Seconds>,
+        }
+
+        #[serde_with::serde_as]
+        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct QueueItem {
+            pub active_track_ids: Option<Vec<TrackId>>,
+
+            // `autoplay` seems to sometimes be serialised as a JSON string, like `"false"`.
+            // Support deserialising from a bool or string, serialise as a bool.
+            #[serde_as(as = "serde_with::PickFirst<(_, serde_with::DisplayFromStr)>")]
+            pub autoplay: bool,
+
+            #[serde(default)]
+            pub custom_data: CustomData,
+
+            /// Must be missing for load requests, is assigned by the
+            /// receiver, then must be present for further requests,
+            /// and will be present for responses.
+            pub item_id: Option<ItemId>,
+            pub media: Option<Media>,
+            pub order_id: Option<i32>,
+            pub playback_duration: Option<Seconds>,
+            pub preload_time: Option<Seconds>,
+            pub start_time: Option<Seconds>,
+        }
+
+        #[derive(Clone, Debug, Deserialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Status {
             #[serde(rename = "status")]
             pub entries: Vec<StatusEntry>,
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize)]
         #[serde(rename_all = "camelCase")]
         pub struct StatusEntry {
-            pub media_session_id: i32,
+            pub media_session_id: MediaSessionId,
 
+            pub active_track_ids: Option<Vec<TrackId>>,
+            pub current_item_id: Option<ItemId>,
+            pub current_time: Option<Seconds>,
+            pub idle_reason: Option<IdleReason>,
+            pub items: Option<Vec<QueueItem>>,
+            pub loading_item_id: Option<ItemId>,
             pub media: Option<Media>,
-
-            pub playback_rate: f32,
-            pub player_state: String,
-            pub idle_reason: Option<String>,
-            pub current_time: Option<f32>,
-            pub current_item_id: Option<i32>,
+            pub playback_rate: f64,
+            pub player_state: PlayerState,
+            pub preloaded_item_id: Option<ItemId>,
+            pub queue_data: Option<QueueData>,
+            pub repeat_mode: Option<RepeatMode>,
             pub supported_media_commands: u32,
-            pub items: Option<Vec<Item>>,
-
-            pub repeat_mode: Option<String>,
 
             // This field seems invalid. Volume level is always 1.0 in testing.
             // pub volume: crate::payload::receiver::Volume,
@@ -233,81 +335,131 @@ pub mod media {
         #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
-        pub struct Media {
-            pub content_id: String,
-
-            #[serde(default)]
-            pub stream_type: String,
-
-            pub content_type: String,
-
-            pub metadata: Option<Metadata>,
-
-            pub duration: Option<f32>,
-
-            pub content_url: Option<String>,
+        pub struct TextTrackStyle {
+            pub background_color: Option<Color>,
 
             #[serde(default)]
             pub custom_data: CustomData,
-        }
 
-        #[serde_with::serde_as]
-        #[skip_serializing_none]
-        #[derive(Clone, Debug, Deserialize, Serialize)]
-        #[serde(rename_all = "camelCase")]
-        pub struct Item {
-            pub item_id: i32,
+            pub edge_color: Option<Color>,
+            // TODO: pub edge_type: Option<TextTrackEdgeType>,
+            pub font_family: Option<String>,
+            // TODO: pub font_generic_family: Option<FontGenericFamily>,
 
-            pub media: Option<Media>,
+            /// Default scaling is 1.0.
+            pub font_scale: Option<f64>,
 
-            // `auto_play` seems to sometimes be serialised as a JSON string, like `"false"`.
-            // Support deserialising from a bool or string, serialise as a bool.
-            #[serde_as(as = "serde_with::PickFirst<(_, serde_with::DisplayFromStr)>")]
+            // TODO: pub font_style: Option<FontStyle>,
+            pub foreground_color: Option<Color>,
+            pub window_color: Option<Color>,
 
-            #[serde(rename = "autoplay")]
-            pub auto_play: bool,
+            /// Rounded corner radius absolute value in pixels (px).
+            /// This value will be ignored if window_type is not RoundedCorners.
+            pub window_rounded_corner_radius: Option<f64>,
 
-            #[serde(default)]
-            pub custom_data: CustomData,
+            // TODO: pub window_type: Option<TextTrackWindowType>,
         }
 
         #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
-        pub struct Metadata {
-            pub metadata_type: u32,
-            pub title: Option<String>,
-            pub series_title: Option<String>,
-            pub album_name: Option<String>,
-            pub subtitle: Option<String>,
-            pub album_artist: Option<String>,
-            pub artist: Option<String>,
-            pub composer: Option<String>,
-
+        pub struct Track {
             #[serde(default)]
-            pub images: Vec<Image>,
+            pub custom_data: CustomData,
+            pub is_inband: Option<bool>,
+            pub language: Option<String>,
+            pub name: Option<String>,
+            pub subtype: Option<TextTrackType>,
 
-            pub release_date: Option<String>,
-            pub original_air_date: Option<String>,
-            pub creation_date_time: Option<String>,
-            pub studio: Option<String>,
-            pub location: Option<String>,
-            pub latitude: Option<f64>,
-            pub longitude: Option<f64>,
-            pub season: Option<u32>,
-            pub episode: Option<u32>,
-            pub track_number: Option<u32>,
-            pub disc_number: Option<u32>,
-            pub width: Option<u32>,
-            pub height: Option<u32>,
+            /// Typically a URL for the track.
+            pub track_content_id: Option<String>,
+
+            pub track_content_type: Option<MimeType>,
+            pub track_id: TrackId,
+
+            #[serde(rename = "type")]
+            pub track_type: Option<TrackType>,
         }
 
-        #[skip_serializing_none]
+        #[derive(Clone, Debug, Deserialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum IdleReason {
+            Cancelled,
+            Interrupted,
+            Finished,
+
+            #[serde(untagged, skip_serializing)]
+            Unknown(String),
+        }
+
+        #[derive(Clone, Debug, Deserialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum PlayerState {
+            Idle,
+            Playing,
+            Paused,
+            Buffering,
+
+            #[serde(untagged, skip_serializing)]
+            Unknown(String),
+        }
+
         #[derive(Clone, Debug, Deserialize, Serialize)]
-        pub struct Image {
-            pub url: String,
-            pub width: Option<u32>,
-            pub height: Option<u32>,
+        #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum RepeatMode {
+            #[serde(alias = "REPEAT_OFF")]
+            Off,
+
+            #[serde(alias = "REPEAT_ALL")]
+            All,
+
+            #[serde(alias = "REPEAT_ALL_AND_SHUFFLE")]
+            AllAndShuffle,
+
+            #[serde(alias = "REPEAT_SINGLE")]
+            Single,
+
+            #[serde(untagged, skip_serializing)]
+            #[clap(skip)]
+            Unknown(String),
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum StreamType {
+            Buffered,
+            Live,
+            Other,
+
+            #[serde(untagged, skip_serializing)]
+            #[clap(skip)]
+            Unknown(String),
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum TextTrackType {
+            Captions,
+            Chapters,
+            Descriptions,
+            Metadata,
+            Subtitles,
+
+            #[serde(untagged, skip_serializing)]
+            Unknown(String),
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum TrackType {
+            Audio,
+            Video,
+            Text,
+
+            #[serde(untagged, skip_serializing)]
+            Unknown(String),
         }
 
         #[derive(Debug, Serialize)]
@@ -318,6 +470,7 @@ pub mod media {
         }
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(transparent)]
         pub struct CustomData(pub serde_json::Value);
 
         impl Default for CustomData {
@@ -331,6 +484,15 @@ pub mod media {
                 CustomData(serde_json::Value::Null)
             }
         }
+
+        /// Expected format: "#RRGGBBAA".
+        // TODO: Switch to a strongly typed version.
+        pub type Color = String;
+
+        pub type ItemId = i32;
+        pub type MimeType = String;
+        pub type Seconds = f64;
+        pub type TrackId = i32;
     }
     pub use self::shared::*;
 
@@ -433,16 +595,25 @@ pub mod media {
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
+    #[skip_serializing_none]
     pub struct LoadRequest {
+        #[serde(flatten)]
+        pub args: LoadRequestArgs,
+
         pub session_id: SessionId,
+    }
 
-        pub media: Media,
-        pub current_time: f64,
-
-        #[serde(default)]
-        pub custom_data: CustomData,
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    #[skip_serializing_none]
+    pub struct LoadRequestArgs {
+        pub active_track_ids: Option<Vec<TrackId>>,
         pub autoplay: bool,
-        pub preload_time: f64,
+        pub current_time: Option<Seconds>,
+        pub custom_data: CustomData,
+        pub media: Media,
+        pub playback_rate: Option<f64>,
+        pub queue_data: Option<QueueData>,
     }
 
     impl RequestInner for LoadRequest {
@@ -450,6 +621,30 @@ pub mod media {
         const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_LOAD;
     }
 
+    impl LoadRequestArgs {
+        pub fn from_url(url: &str) -> LoadRequestArgs {
+            LoadRequestArgs {
+                media: Media {
+                    content_id: url.to_string(),
+                    content_type: "".to_string(),
+                    content_url: None,
+                    custom_data: CustomData::default(),
+                    duration: None,
+                    metadata: None,
+                    stream_type: None,
+                    text_track_style: None,
+                    tracks: None,
+                },
+
+                active_track_ids: None,
+                autoplay: true,
+                current_time: None,
+                custom_data: CustomData::default(),
+                playback_rate: None,
+                queue_data: None,
+            }
+        }
+    }
 
     #[derive(Debug, Deserialize)]
     #[serde(tag = "type",
@@ -523,7 +718,7 @@ pub mod media {
     #[serde(rename_all = "camelCase")]
     pub struct SeekRequest {
         pub media_session_id: MediaSessionId,
-        pub current_time: Option<f32>,
+        pub current_time: Option<Seconds>,
         pub resume_state: Option<ResumeState>,
         pub custom_data: CustomData,
     }

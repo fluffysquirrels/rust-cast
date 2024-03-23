@@ -4,7 +4,6 @@ use futures::StreamExt;
 use rust_cast::{
     self as lib,
     async_client::{self as client, Client, /* Error, */ Result,
-                   LoadMediaArgs,
                    DEFAULT_RECEIVER_ID as RECEIVER_ID},
     payload,
     types::{MediaSession, NamespaceConst},
@@ -30,6 +29,7 @@ enum Command {
     AppStop,
     Demo(DemoArgs),
     Heartbeat,
+    MediaLoad(MediaLoadArgs),
     Pause,
     Play,
     Seek(SeekArgs),
@@ -42,6 +42,12 @@ enum Command {
 struct DemoArgs {
     #[arg(long)]
     no_stop: bool,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct MediaLoadArgs {
+    #[arg(long)]
+    url: String,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -72,7 +78,7 @@ struct StatusArgs {
 #[derive(clap::Args, Clone, Debug)]
 struct SeekArgs {
     #[arg(long)]
-    time: Option<f32>,
+    time: Option<f64>,
 
     #[arg(long, value_enum)]
     resume_state: Option<payload::media::ResumeState>,
@@ -102,6 +108,7 @@ async fn main() -> Result<()> {
         Command::AppStop => app_stop_main(&mut client).await?,
         Command::Demo(sub_args) => demo_main(&mut client, sub_args).await?,
         Command::Heartbeat => heartbeat_main(&mut client).await?,
+        Command::MediaLoad(sub_args) => media_load_main(&mut client, sub_args).await?,
         Command::Pause => media_pause_main(&mut client).await?,
         Command::Play => media_play_main(&mut client).await?,
         Command::Seek(sub_args) => media_seek_main(&mut client, sub_args).await?,
@@ -177,9 +184,8 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
 
 async fn status_single(client: &mut Client) -> Result<()> {
     let receiver_status = client.receiver_status().await?;
-    // println!("receiver_status = {receiver_status:#?}");
-    let receiver_status_small = payload::receiver::small_debug::ReceiverStatus(&receiver_status);
-    println!("receiver_status (small) = {receiver_status_small:#?}");
+
+    print_receiver_status(&receiver_status);
 
     for media_app in
         receiver_status.applications.iter().filter(
@@ -276,58 +282,43 @@ async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> 
     Ok(())
 }
 
+async fn media_load_main(client: &mut Client, sub_args: MediaLoadArgs) -> Result<()> {
+    status_single(client).await?;
+
+    let load_args = payload::media::LoadRequestArgs::from_url(
+        &sub_args.url);
+
+    let _media_session = media_load(client, load_args).await?;
+
+    Ok(())
+}
 
 async fn demo_main(client: &mut Client, sub_args: DemoArgs) -> Result<()> {
-    let status = client.receiver_status().await?;
-    println!("status = {status:#?}");
+    status_single(client).await?;
 
-    let (app_session, launch_status) =
-        client.media_launch_default(RECEIVER_ID.into()).await?;
-    println!(" # launched:\n\
-              _  app_session = {app_session:#?}\n\
-              _  status = {launch_status:#?}\n\n");
+    let load_args = payload::media::LoadRequestArgs::from_url(
+        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
 
-    let media_url =
-        "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
-    let media = LoadMediaArgs {
-        media: payload::media::Media {
-            content_id: media_url.to_string(),
-            stream_type: "NONE".to_string(), // one of "NONE", "BUFFERED", "LIVE"
-            content_type: "".to_string(),
-            metadata: None,
-            duration: None, // : Option<f32>
-            content_url: None, // : Option<String>
-            custom_data: payload::media::CustomData::default(),
-        },
-
-        current_time: 0_f64,
-        autoplay: true,
-        preload_time: None, // Use default.
-        custom_data: payload::media::CustomData::default(),
-    };
-
-    let media_load_res = client.media_load(app_session.clone(), media).await?;
-    println!("media_load_res = {media_load_res:#?}");
+    let media_session = media_load(client, load_args).await?;
 
     sleep(std::time::Duration::from_secs(2)).await;
 
-    let receiver_status = client.receiver_status().await?;
-    println!("receiver_status = {receiver_status:#?}");
-
-    let media_status_res = client.media_status(app_session.clone(),
-                                               /* media_session_id: */ None).await?;
-    println!("media_status_res = {media_status_res:#?}");
+    status_single(client).await?;
 
     sleep(std::time::Duration::from_secs(2)).await;
 
     if !sub_args.no_stop {
-        let stop_res = client.receiver_stop_app(app_session.clone()).await?;
-        println!("stop_res = {stop_res:#?}");
+        let stop_res = client.receiver_stop_app(media_session.app_session.clone()).await?;
+        println!("stop_res = {stop_res:#?}",
+                 stop_res = payload::receiver::small_debug::ReceiverStatus(&stop_res));
 
         sleep(std::time::Duration::from_secs(1)).await;
 
-        let receiver_status_2 = client.receiver_status().await?;
-        println!("receiver_status_2 = {receiver_status_2:#?}");
+        status_single(client).await?;
+
+        sleep(std::time::Duration::from_secs(2)).await;
+
+        status_single(client).await?;
     }
 
     Ok(())
@@ -376,7 +367,54 @@ async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
     })
 }
 
+#[named]
+async fn media_load(client: &mut Client, load_args: payload::media::LoadRequestArgs)
+ -> Result<MediaSession>
+{
+    const FUNCTION_PATH: &str = function_path!();
+
+    status_single(client).await?;
+
+    let (app_session, launch_status) =
+        client.media_launch_default(RECEIVER_ID.into()).await?;
+    println!(" # launched:\n\
+              _  app_session = {app_session:#?}\n\
+              _  status = {launch_status_small:#?}\n\n",
+             launch_status_small =
+                 payload::receiver::small_debug::ReceiverStatus(&launch_status));
+
+    let load_res = client.media_load(app_session.clone(), load_args).await?;
+    println!("media_load_res = {load_res:#?}",
+             load_res = payload::media::small_debug::MediaStatus(&load_res));
+
+    let Some(media_session_id) =
+        load_res.entries.first()
+            .map(|s| s.media_session_id) else
+    {
+        bail!("{FUNCTION_PATH}: No media status entry\n\
+               _ media_status = {load_res:#?}");
+    };
+
+    Ok(MediaSession {
+        app_session,
+        media_session_id,
+    })
+}
+
+fn print_receiver_status(receiver_status: &payload::receiver::Status) {
+    if tracing::event_enabled!(tracing::Level::TRACE) {
+    println!("receiver_status (full) = {receiver_status:#?}");
+    }
+
+    let receiver_status_small = payload::receiver::small_debug::ReceiverStatus(&receiver_status);
+    println!("receiver_status = {receiver_status_small:#?}");
+}
+
 fn print_media_status(media_status: &payload::media::Status) {
+    if tracing::event_enabled!(tracing::Level::TRACE) {
+        println!("media_status (full) = {media_status:#?}");
+    }
+
     let media_status_small = payload::media::small_debug::MediaStatus(media_status);
     println!("media_status = {media_status_small:#?}");
 }

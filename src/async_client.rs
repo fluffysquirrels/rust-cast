@@ -78,21 +78,6 @@ struct Shared {
     status_tx: broadcast::Sender<StatusUpdate>,
 }
 
-#[derive(Debug)]
-pub struct LoadMediaArgs {
-    pub media: payload::media::Media,
-
-    pub current_time: f64,
-    pub autoplay: bool,
-
-    /// None to use default.
-    pub preload_time: Option<f64>,
-
-    pub custom_data: CustomData,
-
-    // TODO: Add defaults or builder.
-}
-
 pin_project! {
     struct Task<S: TokioAsyncStream> {
         #[pin]
@@ -249,6 +234,7 @@ pub mod app {
 
     pub const DEFAULT_MEDIA_RECEIVER: AppIdConst = "CC1AD845";
     pub const BACKDROP: AppIdConst = "E8C28D3C";
+    pub const NETFLIX: AppIdConst = "CA5E8412";
     pub const YOUTUBE: AppIdConst = "233637DE";
 }
 
@@ -425,17 +411,12 @@ impl Client {
     #[named]
     pub async fn media_load(&mut self,
                             app_session: AppSession,
-                            load_args: LoadMediaArgs)
+                            load_args: payload::media::LoadRequestArgs)
     -> Result<payload::media::Status> {
         let payload_req = payload::media::LoadRequest {
             session_id: app_session.session_id,
 
-            media: load_args.media,
-
-            current_time: load_args.current_time,
-            custom_data: load_args.custom_data,
-            autoplay: load_args.autoplay,
-            preload_time: load_args.preload_time.unwrap_or(10_f64),
+            args: load_args,
         };
 
         let resp: Payload<payload::media::LoadResponse>
@@ -471,7 +452,7 @@ impl Client {
     #[named]
     pub async fn media_seek(&mut self,
                             media_session: MediaSession,
-                            current_time: Option<f32>,
+                            current_time: Option<f64>,
                             resume_state: Option<payload::media::ResumeState>,
                             custom_data: CustomData)
     -> Result<payload::media::Status>
