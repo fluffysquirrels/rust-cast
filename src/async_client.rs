@@ -408,6 +408,29 @@ impl Client {
     //     todo!()
     // }
 
+
+    #[named]
+    pub async fn media_edit_tracks_info(&mut self,
+                                        media_session: MediaSession,
+                                        args: payload::media::EditTracksInfoRequestArgs)
+    -> Result<payload::media::Status>
+    {
+        let payload_req = payload::media::EditTracksInfoRequest {
+            args,
+            media_session_id: media_session.media_session_id,
+        };
+        let resp: Payload<payload::media::GetStatusResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
     #[named]
     pub async fn media_load(&mut self,
                             app_session: AppSession,
@@ -443,6 +466,94 @@ impl Client {
         self.simple_media_request(media_session, payload::media::PauseRequest).await
     }
 
+    #[named]
+    pub async fn media_queue_insert(&mut self,
+                                  media_session: MediaSession,
+                                  args: payload::media::QueueInsertRequestArgs)
+    -> Result<payload::media::Status> {
+        let payload_req = payload::media::QueueInsertRequest {
+            session_id: media_session.app_session_id().clone(),
+            args,
+        };
+
+        let resp: Payload<payload::media::LoadResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        let payload::media::LoadResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
+    #[named]
+    pub async fn media_queue_load(&mut self,
+                                  media_session: MediaSession,
+                                  args: payload::media::QueueLoadRequestArgs)
+    -> Result<payload::media::Status> {
+        let payload_req = payload::media::QueueLoadRequest {
+            session_id: media_session.app_session_id().clone(),
+            args,
+        };
+
+        let resp: Payload<payload::media::LoadResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        let payload::media::LoadResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
+    #[named]
+    pub async fn media_queue_reorder(&mut self,
+                                  media_session: MediaSession,
+                                  args: payload::media::QueueReorderRequestArgs)
+    -> Result<payload::media::Status> {
+        let payload_req = payload::media::QueueReorderRequest {
+            session_id: media_session.app_session_id().clone(),
+            args,
+        };
+
+        let resp: Payload<payload::media::LoadResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        let payload::media::LoadResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
+    #[named]
+    pub async fn media_queue_update(&mut self,
+                                  media_session: MediaSession,
+                                  args: payload::media::QueueUpdateRequestArgs)
+    -> Result<payload::media::Status> {
+        let payload_req = payload::media::QueueUpdateRequest {
+            session_id: media_session.app_session_id().clone(),
+            args,
+        };
+
+        let resp: Payload<payload::media::LoadResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        let payload::media::LoadResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
     pub async fn media_stop(&mut self,
                             media_session: MediaSession)
     -> Result<payload::media::Status> {
@@ -466,7 +577,7 @@ impl Client {
 
         let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req,
-                            media_session.app_session.app_destination_id.clone()).await?;
+                            media_session.app_destination_id().clone()).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response from seek request\n\
@@ -493,7 +604,7 @@ impl Client {
 
         let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req,
-                            media_session.app_session.app_destination_id.clone()).await?;
+                            media_session.app_destination_id().clone()).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\

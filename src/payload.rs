@@ -185,12 +185,15 @@ pub mod media {
     pub const MESSAGE_REQUEST_TYPE_PAUSE: MessageTypeConst = "PAUSE";
     pub const MESSAGE_REQUEST_TYPE_STOP: MessageTypeConst = "STOP";
     pub const MESSAGE_REQUEST_TYPE_SEEK: MessageTypeConst = "SEEK";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_REMOVE: MessageTypeConst = "QUEUE_REMOVE";
+    pub const MESSAGE_REQUEST_TYPE_EDIT_TRACKS_INFO: MessageTypeConst = "EDIT_TRACKS_INFO";
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
     pub const MESSAGE_REQUEST_TYPE_QUEUE_INSERT: MessageTypeConst = "QUEUE_INSERT";
     pub const MESSAGE_REQUEST_TYPE_QUEUE_LOAD: MessageTypeConst = "QUEUE_LOAD";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_PREV: MessageTypeConst = "QUEUE_PREV";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_NEXT: MessageTypeConst = "QUEUE_NEXT";
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_NEXT: MessageTypeConst = "QUEUE_NEXT";
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_PREV: MessageTypeConst = "QUEUE_PREV";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_REMOVE: MessageTypeConst = "QUEUE_REMOVE";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_REORDER: MessageTypeConst = "QUEUE_REORDER";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_UPDATE: MessageTypeConst = "QUEUE_UPDATE";
 
     pub const MESSAGE_RESPONSE_TYPE_MEDIA_STATUS: MessageTypeConst = "MEDIA_STATUS";
     pub const MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED: MessageTypeConst = "LOAD_CANCELLED";
@@ -326,6 +329,20 @@ pub mod media {
             pub preloaded_item_id: Option<ItemId>,
             pub queue_data: Option<QueueData>,
             pub repeat_mode: Option<RepeatMode>,
+
+            /// Bit field.
+            /// * `1` `Pause`;
+            /// * `2` `Seek`;
+            /// * `4` `Stream volume`;
+            /// * `8` `Stream mute`;
+            /// * `16` `Skip forward`;
+            /// * `32` `Skip backward`;
+            /// * `1 << 12` `Unknown`;
+            /// * `1 << 13` `Unknown`;
+            /// * `1 << 18` `Unknown`.
+            // TODO: Replace this with a bitfield type.
+            // Crate [modular-bitfield](https://docs.rs/modular-bitfield)
+            // looks excellent.
             pub supported_media_commands: u32,
 
             // This field seems invalid. Volume level is always 1.0 in testing.
@@ -423,6 +440,12 @@ pub mod media {
             #[serde(untagged, skip_serializing)]
             #[clap(skip)]
             Unknown(String),
+        }
+
+        impl Default for RepeatMode {
+            fn default() -> RepeatMode {
+                RepeatMode::Off
+            }
         }
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -593,9 +616,9 @@ pub mod media {
         }
     }
 
+    #[skip_serializing_none]
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
-    #[skip_serializing_none]
     pub struct LoadRequest {
         #[serde(flatten)]
         pub args: LoadRequestArgs,
@@ -603,9 +626,9 @@ pub mod media {
         pub session_id: SessionId,
     }
 
+    #[skip_serializing_none]
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
-    #[skip_serializing_none]
     pub struct LoadRequestArgs {
         pub active_track_ids: Option<Vec<TrackId>>,
         pub autoplay: bool,
@@ -679,6 +702,30 @@ pub mod media {
 
 
 
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct EditTracksInfoRequest {
+        #[serde(flatten)]
+        pub args: EditTracksInfoRequestArgs,
+        pub media_session_id: MediaSessionId,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct EditTracksInfoRequestArgs {
+        pub active_track_ids: Option<Vec<TrackId>>,
+        pub text_track_style: Option<TextTrackStyle>,
+    }
+
+    impl RequestInner for EditTracksInfoRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_EDIT_TRACKS_INFO;
+    }
+
+
+
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct GetStatusRequest {
@@ -711,6 +758,156 @@ pub mod media {
             MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
+    }
+
+
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueInsertRequest {
+        #[serde(flatten)]
+        pub args: QueueInsertRequestArgs,
+
+        pub session_id: SessionId,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueInsertRequestArgs {
+        pub custom_data: CustomData,
+
+        /// When None, insert the items to the end of the queue.
+        pub insert_before: Option<ItemId>,
+        pub items: Vec<QueueItem>,
+    }
+
+    impl RequestInner for QueueInsertRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_INSERT;
+    }
+
+
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueLoadRequest {
+        #[serde(flatten)]
+        pub args: QueueLoadRequestArgs,
+
+        pub session_id: SessionId,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueLoadRequestArgs {
+        pub custom_data: CustomData,
+        pub items: Vec<QueueItem>,
+        pub repeat_mode: RepeatMode,
+
+        /// Default: 0.
+        pub start_index: u32,
+    }
+
+    impl RequestInner for QueueLoadRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_LOAD;
+    }
+
+
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueReorderRequest {
+        #[serde(flatten)]
+        pub args: QueueReorderRequestArgs,
+
+        pub session_id: SessionId,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueReorderRequestArgs {
+        pub custom_data: CustomData,
+
+        /// When None, re-order the items to the end of the queue.
+        pub insert_before: Option<ItemId>,
+        pub item_ids: Vec<ItemId>,
+    }
+
+    impl RequestInner for QueueReorderRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_REORDER;
+    }
+
+
+
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueUpdateRequest {
+        #[serde(flatten)]
+        pub args: QueueUpdateRequestArgs,
+
+        pub session_id: SessionId,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueUpdateRequestArgs {
+        pub current_item_id: Option<ItemId>,
+        pub custom_data: CustomData,
+        pub items: Option<Vec<QueueItem>>,
+
+        /// Play the item forward or back by this offset in the queue items list.
+        pub jump: Option<i32>,
+        pub repeat_mode: Option<RepeatMode>,
+    }
+
+    impl RequestInner for QueueUpdateRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_UPDATE;
+    }
+
+    impl QueueUpdateRequestArgs {
+        pub fn jump_item(item_id: ItemId) -> QueueUpdateRequestArgs {
+            QueueUpdateRequestArgs {
+                current_item_id: Some(item_id),
+                .. Self::empty()
+            }
+        }
+
+        pub fn jump_next() -> QueueUpdateRequestArgs {
+            Self::jump_offset(1)
+        }
+
+        pub fn jump_offset(offset: i32) -> QueueUpdateRequestArgs {
+            QueueUpdateRequestArgs {
+                jump: Some(offset),
+                .. Self::empty()
+            }
+        }
+
+        pub fn jump_prev() -> QueueUpdateRequestArgs {
+            Self::jump_offset(-1)
+        }
+
+        pub fn empty() -> QueueUpdateRequestArgs {
+            QueueUpdateRequestArgs {
+                current_item_id: None,
+                custom_data: CustomData::default(),
+                items: None,
+                jump: None,
+                repeat_mode: None,
+            }
+        }
     }
 
 

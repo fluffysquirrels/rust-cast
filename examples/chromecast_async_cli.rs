@@ -3,9 +3,9 @@ use clap::Parser;
 use futures::StreamExt;
 use rust_cast::{
     self as lib,
-    async_client::{self as client, Client, /* Error, */ Result,
+    async_client::{self as client, Client, Error, Result,
                    DEFAULT_RECEIVER_ID as RECEIVER_ID},
-    payload,
+    payload::{self, media::CustomData},
     types::{MediaSession, NamespaceConst},
     function_path, named,
 };
@@ -29,7 +29,14 @@ enum Command {
     AppStop,
     Demo(DemoArgs),
     Heartbeat,
+    MediaEditTracksInfo(MediaEditTracksInfoArgs),
     MediaLoad(MediaLoadArgs),
+    // TODO: MediaQueueInsert(MediaQueueInsertArgs),
+    MediaQueueJump(MediaQueueJumpArgs),
+    // TODO: MediaQueueLoad(MediaQueueLoadArgs),
+    // TODO: MediaQueueRemove(MediaQueueRemoveArgs),
+    // TODO: MediaQueueReorder(MediaQueueReorderArgs),
+    // TODO: MediaQueueUpdate(MediaQueueUpdateArgs),
     Pause,
     Play,
     Seek(SeekArgs),
@@ -45,9 +52,42 @@ struct DemoArgs {
 }
 
 #[derive(clap::Args, Clone, Debug)]
+struct MediaEditTracksInfoArgs {
+    #[arg(long, visible_alias = "tracks",
+          action(clap::ArgAction::Set),
+          allow_negative_numbers = true,
+          require_equals = true,
+          value_delimiter = ',')]
+    active_track_ids: Option<Vec<payload::media::TrackId>>,
+
+    #[arg(long, visible_alias = "text-style",
+          default_value_t = false)]
+    set_text_track_style: bool,
+
+    #[clap(flatten)]
+    text_track_style: TextTrackStyleArgs,
+}
+
+#[derive(clap::Args, Clone, Debug)]
 struct MediaLoadArgs {
     #[arg(long)]
     url: String,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+#[group(required = true, multiple = false)]
+struct MediaQueueJumpArgs {
+    #[arg(long)]
+    item: Option<payload::media::ItemId>,
+
+    #[arg(long, default_value_t = false)]
+    next: bool,
+
+    #[arg(long)]
+    offset: Option<i32>,
+
+    #[arg(long, default_value_t = false)]
+    prev: bool,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -60,6 +100,17 @@ struct SetVolumeArgs {
           action = clap::ArgAction::Set, default_missing_value = "true",
           require_equals = true, num_args = 0..=1)]
     mute: Option<bool>,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct SeekArgs {
+    #[arg(long)]
+    time: Option<f64>,
+
+    // TODO: offset: Option<f64>,
+
+    #[arg(long, value_enum)]
+    resume_state: Option<payload::media::ResumeState>,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -76,13 +127,40 @@ struct StatusArgs {
 }
 
 #[derive(clap::Args, Clone, Debug)]
-struct SeekArgs {
+struct TextTrackStyleArgs {
     #[arg(long)]
-    time: Option<f64>,
+    background_color: Option<ColorArg>,
 
-    #[arg(long, value_enum)]
-    resume_state: Option<payload::media::ResumeState>,
+    #[arg(long)]
+    edge_color: Option<ColorArg>,
+    // TODO: edge_type: Option<TextTrackEdgeType>,
+
+    #[arg(long)]
+    font_family: Option<String>,
+
+    // TODO: font_generic_family: Option<FontGenericFamily>,
+
+    /// Default scaling is 1.0.
+    #[arg(long)]
+    font_scale: Option<f64>,
+
+    // TODO: font_style: Option<FontStyle>,
+    #[arg(long)]
+    foreground_color: Option<ColorArg>,
+
+    #[arg(long)]
+    window_color: Option<ColorArg>,
+
+    /// Rounded corner radius absolute value in pixels (px).
+    /// This value will be ignored if window_type is not RoundedCorners.
+    #[arg(long)]
+    window_rounded_corner_radius: Option<f64>,
+
+    // TODO: window_type: Option<TextTrackWindowType>,
 }
+
+// TODO: Possibly validate, use a strongly typed value.
+type ColorArg = String;
 
 const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
 
@@ -108,7 +186,10 @@ async fn main() -> Result<()> {
         Command::AppStop => app_stop_main(&mut client).await?,
         Command::Demo(sub_args) => demo_main(&mut client, sub_args).await?,
         Command::Heartbeat => heartbeat_main(&mut client).await?,
+        Command::MediaEditTracksInfo(sub_args) => media_edit_tracks_info_main(
+                                                      &mut client, sub_args).await?,
         Command::MediaLoad(sub_args) => media_load_main(&mut client, sub_args).await?,
+        Command::MediaQueueJump(sub_args) => media_queue_jump_main(&mut client, sub_args).await?,
         Command::Pause => media_pause_main(&mut client).await?,
         Command::Play => media_play_main(&mut client).await?,
         Command::Seek(sub_args) => media_seek_main(&mut client, sub_args).await?,
@@ -250,6 +331,27 @@ async fn set_volume_main(client: &mut Client, sub_args: SetVolumeArgs) -> Result
     Ok(())
 }
 
+async fn media_edit_tracks_info_main(client: &mut Client, sub_args: MediaEditTracksInfoArgs)
+-> Result<()> {
+    let args = payload::media::EditTracksInfoRequestArgs {
+        active_track_ids: sub_args.active_track_ids,
+        text_track_style: if sub_args.set_text_track_style {
+                              Some(sub_args.text_track_style.try_into()?)
+                          } else {
+                              None
+                          },
+    };
+
+    let media_session = get_media_session(client).await?;
+    let media_status = client.media_edit_tracks_info(
+                           media_session,
+                           args
+                       ).await?;
+
+    print_media_status(&media_status);
+    Ok(())
+}
+
 async fn media_pause_main(client: &mut Client) -> Result<()> {
     let media_session = get_media_session(client).await?;
     let media_status = client.media_pause(media_session).await?;
@@ -260,6 +362,29 @@ async fn media_pause_main(client: &mut Client) -> Result<()> {
 async fn media_play_main(client: &mut Client) -> Result<()> {
     let media_session = get_media_session(client).await?;
     let media_status = client.media_play(media_session).await?;
+    print_media_status(&media_status);
+    Ok(())
+}
+
+async fn media_queue_jump_main(client: &mut Client, sub_args: MediaQueueJumpArgs) -> Result<()> {
+    use payload::media::QueueUpdateRequestArgs;
+
+    let args: QueueUpdateRequestArgs =
+        if let Some(item_id) = sub_args.item {
+            QueueUpdateRequestArgs::jump_item(item_id)
+        } else if let Some(offset) = sub_args.offset {
+            QueueUpdateRequestArgs::jump_offset(offset)
+        } else if sub_args.next {
+            QueueUpdateRequestArgs::jump_next()
+        } else if sub_args.prev {
+            QueueUpdateRequestArgs::jump_prev()
+        } else {
+            bail!("MediaQueueJumpArgs: no options set\n\
+                   _ sub_args = {sub_args:#?}");
+        };
+
+    let media_session = get_media_session(client).await?;
+    let media_status = client.media_queue_update(media_session, args).await?;
     print_media_status(&media_status);
     Ok(())
 }
@@ -276,7 +401,7 @@ async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> 
     let media_status = client.media_seek(media_session,
                                          sub_args.time,
                                          sub_args.resume_state,
-                                         payload::media::CustomData::default()
+                                         CustomData::default()
                        ).await?;
     print_media_status(&media_status);
     Ok(())
@@ -429,6 +554,26 @@ async fn pause() -> Result<()> {
     let mut stdin = tokio::io::stdin();
     let _read = stdin.read_u8().await?;
     Ok(())
+}
+
+impl TryInto<payload::media::TextTrackStyle> for TextTrackStyleArgs {
+    type Error = Error;
+
+    fn try_into(self) -> Result<payload::media::TextTrackStyle> {
+        Ok(payload::media::TextTrackStyle {
+            background_color: self.background_color,
+            custom_data: CustomData::default(),
+            edge_color: self.edge_color,
+            // TODO: edge_type: Option<TextTrackEdgeType>,
+            font_family: self.font_family,
+            // TODO: font_generic_family: Option<FontGenericFamily>,
+            font_scale: self.font_scale,
+            foreground_color: self.foreground_color,
+            window_color: self.window_color,
+            window_rounded_corner_radius: self.window_rounded_corner_radius,
+            // TODO: window_type: Option<TextTrackWindowType>,
+        })
+    }
 }
 
 #[derive(Eq, PartialEq)]

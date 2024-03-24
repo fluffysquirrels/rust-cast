@@ -14,6 +14,7 @@ pub type EndpointIdConst = &'static str;
 
 pub const ENDPOINT_BROADCAST: EndpointIdConst = "*";
 
+// TODO: Rename AppSessionId.
 pub type SessionId = String;
 
 /// Unique ID for the playback of an item in this app session.
@@ -22,8 +23,10 @@ pub type MediaSessionId = i32;
 
 #[derive(Clone, Debug)]
 pub struct AppSession {
-    pub receiver_destination_id: EndpointId,
     pub app_destination_id: EndpointId,
+    pub receiver_destination_id: EndpointId,
+
+    // TODO: Rename app_session_id.
     pub session_id: SessionId,
 }
 
@@ -31,4 +34,18 @@ pub struct AppSession {
 pub struct MediaSession {
     pub app_session: AppSession,
     pub media_session_id: MediaSessionId,
+}
+
+impl MediaSession {
+    pub fn app_destination_id(&self) -> &EndpointId {
+        &self.app_session.app_destination_id
+    }
+
+    pub fn receiver_destination_id(&self) -> &EndpointId {
+        &self.app_session.receiver_destination_id
+    }
+
+    pub fn app_session_id(&self) -> &SessionId {
+        &self.app_session.session_id
+    }
 }
