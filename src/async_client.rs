@@ -9,13 +9,12 @@ use crate::{
     payload::{self, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner, ResponseInner,
               media::{CustomData, MediaRequestCommon}},
     types::{AppId, /* AppIdConst, */
-            AppSession,
+            AppSession, /* AppSessionId, */
             EndpointId, EndpointIdConst, ENDPOINT_BROADCAST,
             MediaSession, /* MediaSessionId, */
             MediaSessionId,
             /* MessageType, */ MessageTypeConst,
-            /* Namespace, */ NamespaceConst,
-            /* AppSessionId */},
+            /* Namespace, */ NamespaceConst },
     util::{named},
 };
 use futures::{
@@ -203,9 +202,10 @@ pub struct ErrorStatus {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Statuses {
-    pub receiver_statuses: Vec<payload::receiver::Status>,
-    pub media_statuses: Vec<payload::media::Status>,
+pub struct ReceiverStatuses {
+    pub receiver_id: EndpointId,
+    pub receiver_status: payload::receiver::Status,
+    pub media_statuses: Vec<(MediaSession, payload::media::StatusEntry)>,
 }
 
 /// Duration for the Task to do something locally. (Probably a bit high).
@@ -288,9 +288,37 @@ impl Client {
     }
 
     pub async fn get_statuses(&mut self, receiver_id: EndpointId)
-    -> Result<Statuses>
+    -> Result<ReceiverStatuses>
     {
-        todo!();
+        let receiver_status = self.receiver_status(receiver_id.clone()).await?;
+
+        let mut media_statuses = Vec::<(MediaSession, payload::media::StatusEntry)>
+                                    ::with_capacity(1);
+
+        for media_app in receiver_status.applications.iter()
+                             .filter(|app| app.has_namespace(payload::media::CHANNEL_NAMESPACE))
+        {
+            let app_session = media_app.to_app_session(receiver_id.clone())?;
+
+            self.connection_connect(app_session.app_destination_id.clone()).await?;
+            let media_status = self.media_status(app_session.clone(),
+                                                 /* media_session_id: */ None).await?;
+
+            for media_status_entry in media_status.entries.iter() {
+                let media_session = MediaSession {
+                    app_session: app_session.clone(),
+                    media_session_id: media_status_entry.media_session_id,
+                };
+
+                media_statuses.push((media_session, media_status_entry.clone()));
+            }
+        }
+
+        Ok(ReceiverStatuses {
+            receiver_id,
+            receiver_status,
+            media_statuses,
+        })
     }
 
     pub async fn receiver_status(&mut self, receiver_id: EndpointId)

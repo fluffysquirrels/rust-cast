@@ -1,5 +1,7 @@
 // TODO: Move these to `src/payload.rs`
 
+use serde::{Deserialize, Serialize};
+
 pub type Namespace = String;
 pub type NamespaceConst = &'static str;
 
@@ -20,7 +22,7 @@ pub type AppSessionId = String;
 /// This ID is set by the receiver at LOAD.
 pub type MediaSessionId = i32;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AppSession {
     pub app_destination_id: EndpointId,
     pub receiver_destination_id: EndpointId,
@@ -28,9 +30,11 @@ pub struct AppSession {
     pub app_session_id: AppSessionId,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MediaSession {
+    #[serde(flatten)]
     pub app_session: AppSession,
+
     pub media_session_id: MediaSessionId,
 }
 

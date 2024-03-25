@@ -1276,11 +1276,11 @@ pub mod receiver {
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Application {
-            pub app_id: String,
+            pub app_id: AppId,
 
             #[serde(rename = "sessionId")]
             pub app_session_id: AppSessionId,
-            pub transport_id: String,
+            pub transport_id: EndpointId,
 
             #[serde(default)]
             pub namespaces: Vec<AppNamespace>,
