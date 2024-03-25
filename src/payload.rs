@@ -5,7 +5,7 @@ use crate::{
             EndpointId,
             MediaSessionId,
             MessageType, MessageTypeConst,
-            NamespaceConst, SessionId},
+            NamespaceConst, AppSessionId},
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -366,7 +366,7 @@ pub mod media {
             }
         }
 
-        #[derive(Clone, Debug, Deserialize)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Status {
             #[serde(rename = "status")]
@@ -387,7 +387,7 @@ pub mod media {
             }
         }
 
-        #[derive(Clone, Debug, Deserialize)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct StatusEntry {
             pub media_session_id: MediaSessionId,
@@ -551,7 +551,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Debug, Deserialize)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum IdleReason {
             Cancelled,
@@ -562,7 +562,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Debug, Deserialize)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum PlayerState {
             Idle,
@@ -816,7 +816,8 @@ pub mod media {
         #[serde(flatten)]
         pub args: LoadRequestArgs,
 
-        pub session_id: SessionId,
+        #[serde(rename = "sessionId")]
+        pub app_session_id: AppSessionId,
     }
 
     #[skip_serializing_none]
@@ -1018,7 +1019,9 @@ pub mod media {
         pub args: QueueInsertRequestArgs,
 
         pub media_session_id: MediaSessionId,
-        pub session_id: SessionId,
+
+        #[serde(rename = "sessionId")]
+        pub app_session_id: AppSessionId,
     }
 
     #[skip_serializing_none]
@@ -1046,7 +1049,8 @@ pub mod media {
         #[serde(flatten)]
         pub args: QueueLoadRequestArgs,
 
-        pub session_id: SessionId,
+        #[serde(rename = "sessionId")]
+        pub app_session_id: AppSessionId,
     }
 
     #[skip_serializing_none]
@@ -1245,13 +1249,13 @@ pub mod receiver {
     mod shared {
         use super::*;
 
-        #[derive(Clone, Deserialize, Debug)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct StatusWrapper {
             pub status: Status,
         }
 
-        #[derive(Clone, Deserialize, Debug)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Status {
             #[serde(default)]
@@ -1269,11 +1273,13 @@ pub mod receiver {
             // pub user_eq: ??,
         }
 
-        #[derive(Clone, Deserialize, Debug)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Application {
             pub app_id: String,
-            pub session_id: String,
+
+            #[serde(rename = "sessionId")]
+            pub app_session_id: AppSessionId,
             pub transport_id: String,
 
             #[serde(default)]
@@ -1297,12 +1303,12 @@ pub mod receiver {
                 Ok(AppSession {
                     receiver_destination_id,
                     app_destination_id: self.transport_id.clone(),
-                    session_id: self.session_id.clone(),
+                    app_session_id: self.app_session_id.clone(),
                 })
             }
         }
 
-        #[derive(Clone, Deserialize, Debug, Eq, PartialEq)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct AppNamespace {
             pub name: Cow<'static, str>,
@@ -1387,7 +1393,7 @@ pub mod receiver {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 f.debug_struct("Application")
                 // .field("app_id", &self.0.app_id)
-                    .field("session_id", &self.0.session_id)
+                    .field("app_session_id", &self.0.app_session_id)
                 // .field("transport_id", &self.0.transport_id)
                     .field("display_name", &self.0.display_name)
                     .field("status_text", &self.0.status_text)
@@ -1476,7 +1482,8 @@ pub mod receiver {
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct StopRequest {
-        pub session_id: SessionId,
+        #[serde(rename = "sessionId")]
+        pub app_session_id: AppSessionId,
     }
 
     impl RequestInner for StopRequest {

@@ -15,7 +15,7 @@ use crate::{
             MediaSessionId,
             /* MessageType, */ MessageTypeConst,
             /* Namespace, */ NamespaceConst,
-            /* SessionId */},
+            /* AppSessionId */},
     util::{named},
 };
 use futures::{
@@ -26,6 +26,7 @@ use futures::{
 use once_cell::sync::Lazy;
 use pin_project_lite::pin_project;
 use protobuf::Message;
+use serde::Serialize;
 use std::{
     any::{self, Any},
     collections::{HashMap, HashSet},
@@ -201,6 +202,12 @@ pub struct ErrorStatus {
     // pub connected: bool,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct Statuses {
+    pub receiver_statuses: Vec<payload::receiver::Status>,
+    pub media_statuses: Vec<payload::media::Status>,
+}
+
 /// Duration for the Task to do something locally. (Probably a bit high).
 const LOCAL_TASK_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_000);
 
@@ -280,6 +287,12 @@ impl Client {
              then mem::replace(self, new)");
     }
 
+    pub async fn get_statuses(&mut self, receiver_id: EndpointId)
+    -> Result<Statuses>
+    {
+        todo!();
+    }
+
     pub async fn receiver_status(&mut self, receiver_id: EndpointId)
     -> Result<payload::receiver::Status>
     {
@@ -333,7 +346,7 @@ impl Client {
         const METHOD_PATH: &str = method_path!("Client");
 
         let payload_req = StopRequest {
-            session_id: app_session.session_id,
+            app_session_id: app_session.app_session_id,
         };
 
         let resp: Payload<StopResponse>
@@ -475,7 +488,6 @@ impl Client {
         Ok((app_session, status))
     }
 
-    // TODO: Better argument types?
     #[named]
     pub async fn media_status(&mut self,
                               app_session: AppSession,
@@ -532,7 +544,7 @@ impl Client {
                             load_args: payload::media::LoadRequestArgs)
     -> Result<payload::media::Status> {
         let payload_req = payload::media::LoadRequest {
-            session_id: app_session.session_id,
+            app_session_id: app_session.app_session_id,
 
             args: load_args,
         };
@@ -598,7 +610,7 @@ impl Client {
     -> Result<payload::media::Status> {
         let payload_req = payload::media::QueueInsertRequest {
             media_session_id: media_session.media_session_id,
-            session_id: media_session.app_session_id().clone(),
+            app_session_id: media_session.app_session_id().clone(),
             args,
         };
 
@@ -620,7 +632,7 @@ impl Client {
                                   args: payload::media::QueueLoadRequestArgs)
     -> Result<payload::media::Status> {
         let payload_req = payload::media::QueueLoadRequest {
-            session_id: app_session.session_id.clone(),
+            app_session_id: app_session.app_session_id.clone(),
             args,
         };
 
