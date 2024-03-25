@@ -206,7 +206,7 @@ const LOCAL_TASK_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::fro
 
 /// Duration for an RPC request and response to the Chromecast.
 // TODO: Probably should be configurable.
-const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(5_000);
+const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(10_000);
 
 const DATA_BUFFER_LEN: usize = 64 * 1024;
 
@@ -280,11 +280,13 @@ impl Client {
              then mem::replace(self, new)");
     }
 
-    pub async fn receiver_status(&mut self) -> Result<payload::receiver::Status> {
+    pub async fn receiver_status(&mut self, receiver_id: EndpointId)
+    -> Result<payload::receiver::Status>
+    {
         let payload_req = payload::receiver::GetStatusRequest {};
 
         let resp: Payload<payload::receiver::GetStatusResponse>
-            = self.json_rpc(payload_req, DEFAULT_RECEIVER_ID.to_string()).await?;
+            = self.json_rpc(payload_req, receiver_id).await?;
 
         Ok(resp.inner.0.status)
     }
@@ -370,14 +372,107 @@ impl Client {
         Ok(status)
     }
 
+    #[named]
+    pub async fn media_get_media_session(&mut self, destination_id: EndpointId)
+    -> Result<MediaSession>
+    {
+        const METHOD_PATH: &str = method_path!("Client");
+
+        let receiver_status = self.receiver_status(destination_id.clone()).await?;
+
+        let Some(media_app)
+            = receiver_status.applications.iter()
+                  .find(|app| app.has_namespace(payload::media::CHANNEL_NAMESPACE)) else
+        {
+            bail!("{METHOD_PATH}: No app with media namespace found.\n\
+                   _ receiver_status = {receiver_status:#?}");
+        };
+
+        let app_session = media_app.to_app_session(destination_id.to_string())?;
+        self.connection_connect(app_session.app_destination_id.clone()).await?;
+
+        let media_status = self.media_status(app_session.clone(),
+                                             /* media_session_id: */ None).await?;
+
+        Ok(MediaSession {
+            app_session,
+            media_session_id: media_status.try_find_media_session_id()?,
+        })
+    }
+
+    #[named]
+    pub async fn media_get_default_media_session(&mut self, destination_id: EndpointId)
+    -> Result<MediaSession>
+    {
+        const METHOD_PATH: &str = method_path!("Client");
+
+        let receiver_status = self.receiver_status(destination_id.clone()).await?;
+
+        let Some(media_app)
+            = receiver_status.applications.iter()
+                  .find(|app| app.app_id == app::DEFAULT_MEDIA_RECEIVER) else
+        {
+            bail!("{METHOD_PATH}: No default media app found.\n\
+                   _ receiver_status = {receiver_status:#?}");
+        };
+
+        let app_session = media_app.to_app_session(destination_id.to_string())?;
+        self.connection_connect(app_session.app_destination_id.clone()).await?;
+
+        let media_status = self.media_status(app_session.clone(),
+                                             /* media_session_id: */ None).await?;
+
+        Ok(MediaSession {
+            app_session,
+            media_session_id: media_status.try_find_media_session_id()?,
+        })
+    }
+
+    pub async fn media_get_or_launch_default_app_session(&mut self, destination_id: EndpointId)
+    -> Result<AppSession>
+    {
+        let receiver_status = self.receiver_status(destination_id.clone()).await?;
+
+        let app_session = match receiver_status.applications.iter()
+                                  .find(|app| app.app_id == app::DEFAULT_MEDIA_RECEIVER)
+        {
+            Some(app) => {
+                let app_session = app.to_app_session(destination_id)?;
+                self.connection_connect(app_session.app_destination_id.clone()).await?;
+                app_session
+            },
+            None => {
+                let (app_session, _receiver_status) =
+                    self.media_launch_default(destination_id.clone()).await?;
+                app_session
+            },
+        };
+
+        Ok(app_session)
+    }
+
+    pub async fn media_get_or_launch_default_media_session(&mut self, destination_id: EndpointId)
+    -> Result<MediaSession>
+    {
+        let app_session = self.media_get_or_launch_default_app_session(destination_id).await?;
+
+        let media_status = self.media_status(app_session.clone(),
+                                             /* media_session_id: */ None).await?;
+
+        Ok(MediaSession {
+            app_session,
+            media_session_id: media_status.try_find_media_session_id()?,
+        })
+    }
+
     pub async fn media_launch_default(&mut self, destination_id: EndpointId)
     -> Result<(AppSession, payload::receiver::Status)> {
         let (app, status) = self.receiver_launch_app(destination_id.clone(),
                                                      app::DEFAULT_MEDIA_RECEIVER.into()).await?;
-        let session = app.to_app_session(destination_id.clone())?;
-        self.connection_connect(session.app_destination_id.clone()).await?;
+        let app_session = app.to_app_session(destination_id)?;
+        self.connection_connect(app_session.app_destination_id.clone()).await?;
 
-        Ok((session, status))
+        Ok((app_session, status))
     }
 
     // TODO: Better argument types?
@@ -466,12 +561,43 @@ impl Client {
         self.simple_media_request(media_session, payload::media::PauseRequest).await
     }
 
+    pub async fn media_queue_get_item_ids(&mut self,
+                                          media_session: MediaSession)
+    -> Result<Vec<payload::media::ItemId>> {
+        let payload_req = payload::media::QueueGetItemIdsRequest(
+            MediaRequestCommon {
+                custom_data: CustomData::default(),
+                media_session_id: media_session.media_session_id,
+            });
+
+        let resp: Payload<payload::media::QueueGetItemIdsResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        Ok(resp.inner.item_ids)
+    }
+
+    pub async fn media_queue_get_items(&mut self,
+                                       media_session: MediaSession,
+                                       args: payload::media::QueueGetItemsRequestArgs)
+    -> Result<Vec<payload::media::QueueItem>> {
+        let payload_req = payload::media::QueueGetItemsRequest {
+            args,
+            media_session_id: media_session.media_session_id,
+        };
+
+        let resp: Payload<payload::media::QueueGetItemsResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        Ok(resp.inner.items)
+    }
+
     #[named]
     pub async fn media_queue_insert(&mut self,
                                   media_session: MediaSession,
                                   args: payload::media::QueueInsertRequestArgs)
     -> Result<payload::media::Status> {
         let payload_req = payload::media::QueueInsertRequest {
+            media_session_id: media_session.media_session_id,
             session_id: media_session.app_session_id().clone(),
             args,
         };
@@ -490,18 +616,40 @@ impl Client {
 
     #[named]
     pub async fn media_queue_load(&mut self,
-                                  media_session: MediaSession,
+                                  app_session: AppSession,
                                   args: payload::media::QueueLoadRequestArgs)
     -> Result<payload::media::Status> {
         let payload_req = payload::media::QueueLoadRequest {
-            session_id: media_session.app_session_id().clone(),
+            session_id: app_session.session_id.clone(),
             args,
         };
 
         let resp: Payload<payload::media::LoadResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, app_session.app_destination_id.clone()).await?;
 
         let payload::media::LoadResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
+    #[named]
+    pub async fn media_queue_remove(&mut self,
+                                  media_session: MediaSession,
+                                  args: payload::media::QueueRemoveRequestArgs)
+    -> Result<payload::media::Status> {
+        let payload_req = payload::media::QueueRemoveRequest {
+            media_session_id: media_session.media_session_id,
+            args,
+        };
+
+        let resp: Payload<payload::media::GetStatusResponse>
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+
+        let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
                    _ response = {resp:#?}",
                   method_path = method_path!("Client"));
@@ -516,14 +664,14 @@ impl Client {
                                   args: payload::media::QueueReorderRequestArgs)
     -> Result<payload::media::Status> {
         let payload_req = payload::media::QueueReorderRequest {
-            session_id: media_session.app_session_id().clone(),
+            media_session_id: media_session.media_session_id,
             args,
         };
 
-        let resp: Payload<payload::media::LoadResponse>
+        let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
 
-        let payload::media::LoadResponse::Ok(status) = resp.inner else {
+        let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
                    _ response = {resp:#?}",
                   method_path = method_path!("Client"));
@@ -538,7 +686,7 @@ impl Client {
                                   args: payload::media::QueueUpdateRequestArgs)
     -> Result<payload::media::Status> {
         let payload_req = payload::media::QueueUpdateRequest {
-            session_id: media_session.app_session_id().clone(),
+            media_session_id: media_session.media_session_id,
             args,
         };
 

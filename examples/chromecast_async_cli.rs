@@ -5,9 +5,9 @@ use rust_cast::{
     self as lib,
     async_client::{self as client, Client, Error, Result,
                    DEFAULT_RECEIVER_ID as RECEIVER_ID},
-    payload::{self, media::CustomData},
+    payload::{self, media::{CustomData, ItemId}},
     types::{MediaSession, NamespaceConst},
-    function_path, named,
+    /* function_path, named, */
 };
 use tokio::{
     io::AsyncReadExt,
@@ -30,12 +30,15 @@ enum Command {
     Demo(DemoArgs),
     Heartbeat,
     MediaEditTracksInfo(MediaEditTracksInfoArgs),
+    MediaLaunch,
     MediaLoad(MediaLoadArgs),
-    // TODO: MediaQueueInsert(MediaQueueInsertArgs),
+    MediaQueueGetItemIds,
+    MediaQueueGetItems(MediaQueueGetItemsArgs),
+    MediaQueueInsert(MediaQueueInsertArgs),
     MediaQueueJump(MediaQueueJumpArgs),
-    // TODO: MediaQueueLoad(MediaQueueLoadArgs),
-    // TODO: MediaQueueRemove(MediaQueueRemoveArgs),
-    // TODO: MediaQueueReorder(MediaQueueReorderArgs),
+    MediaQueueLoad(MediaQueueLoadArgs),
+    MediaQueueRemove(MediaQueueRemoveArgs),
+    MediaQueueReorder(MediaQueueReorderArgs),
     // TODO: MediaQueueUpdate(MediaQueueUpdateArgs),
     Pause,
     Play,
@@ -57,6 +60,8 @@ struct MediaEditTracksInfoArgs {
           action(clap::ArgAction::Set),
           allow_negative_numbers = true,
           require_equals = true,
+          default_missing_values([""; 0]),
+          num_args(0..),
           value_delimiter = ',')]
     active_track_ids: Option<Vec<payload::media::TrackId>>,
 
@@ -75,10 +80,29 @@ struct MediaLoadArgs {
 }
 
 #[derive(clap::Args, Clone, Debug)]
+struct MediaQueueGetItemsArgs {
+    #[arg(long,
+          action(clap::ArgAction::Set),
+          allow_negative_numbers = true,
+          require_equals = true,
+          value_delimiter = ',')]
+    items: Vec<ItemId>,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct MediaQueueInsertArgs {
+    #[arg(long, value_name = "ITEM_ID")]
+    before: Option<ItemId>,
+
+    #[clap(flatten)]
+    items: QueueItemsArgs,
+}
+
+#[derive(clap::Args, Clone, Debug)]
 #[group(required = true, multiple = false)]
 struct MediaQueueJumpArgs {
     #[arg(long)]
-    item: Option<payload::media::ItemId>,
+    item: Option<ItemId>,
 
     #[arg(long, default_value_t = false)]
     next: bool,
@@ -88,6 +112,47 @@ struct MediaQueueJumpArgs {
 
     #[arg(long, default_value_t = false)]
     prev: bool,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct MediaQueueLoadArgs {
+    #[clap(flatten)]
+    items: QueueItemsArgs,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct QueueItemsArgs {
+    #[arg(long = "url")]
+    urls: Vec<String>,
+
+    /// If present, parsed as Vec<payload::media::QueueItem>
+    #[arg(long)]
+    items_json: Option<String>,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct MediaQueueRemoveArgs {
+    #[arg(long,
+          required = true, num_args(1..),
+          action(clap::ArgAction::Set),
+          allow_negative_numbers = true,
+          require_equals = true,
+          value_delimiter = ',')]
+    items: Vec<ItemId>,
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct MediaQueueReorderArgs {
+    #[arg(long, value_name = "ITEM_ID")]
+    before: Option<ItemId>,
+
+    #[arg(long,
+          required = true, num_args(1..),
+          action(clap::ArgAction::Set),
+          allow_negative_numbers = true,
+          require_equals = true,
+          value_delimiter = ',')]
+    items: Vec<ItemId>,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -128,23 +193,34 @@ struct StatusArgs {
 
 #[derive(clap::Args, Clone, Debug)]
 struct TextTrackStyleArgs {
+    #[arg(long, value_enum, default_value_t = TextTrackStylePreset::Basic)]
+    preset: TextTrackStylePreset,
+
     #[arg(long)]
     background_color: Option<ColorArg>,
 
     #[arg(long)]
     edge_color: Option<ColorArg>,
+
     // TODO: edge_type: Option<TextTrackEdgeType>,
+    #[arg(long)]
+    edge_type: Option<String>,
 
     #[arg(long)]
     font_family: Option<String>,
 
     // TODO: font_generic_family: Option<FontGenericFamily>,
+    #[arg(long)]
+    font_generic_family: Option<String>,
 
     /// Default scaling is 1.0.
     #[arg(long)]
     font_scale: Option<f64>,
 
     // TODO: font_style: Option<FontStyle>,
+    #[arg(long)]
+    font_style: Option<String>,
+
     #[arg(long)]
     foreground_color: Option<ColorArg>,
 
@@ -157,9 +233,17 @@ struct TextTrackStyleArgs {
     window_rounded_corner_radius: Option<f64>,
 
     // TODO: window_type: Option<TextTrackWindowType>,
+    #[arg(long)]
+    window_type: Option<String>,
 }
 
-// TODO: Possibly validate, use a strongly typed value.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+enum TextTrackStylePreset {
+    Basic,
+    Empty,
+}
+
+// TODO: Probably validate, use a strongly typed value.
 type ColorArg = String;
 
 const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
@@ -188,8 +272,19 @@ async fn main() -> Result<()> {
         Command::Heartbeat => heartbeat_main(&mut client).await?,
         Command::MediaEditTracksInfo(sub_args) => media_edit_tracks_info_main(
                                                       &mut client, sub_args).await?,
+        Command::MediaLaunch => media_launch_main(&mut client).await?,
         Command::MediaLoad(sub_args) => media_load_main(&mut client, sub_args).await?,
+        Command::MediaQueueGetItemIds => media_queue_get_item_ids_main(&mut client).await?,
+        Command::MediaQueueGetItems(sub_args) => media_queue_get_items_main(
+                                                     &mut client, sub_args).await?,
+        Command::MediaQueueInsert(sub_args) => media_queue_insert_main(
+                                                   &mut client, sub_args).await?,
         Command::MediaQueueJump(sub_args) => media_queue_jump_main(&mut client, sub_args).await?,
+        Command::MediaQueueLoad(sub_args) => media_queue_load_main(&mut client, sub_args).await?,
+        Command::MediaQueueRemove(sub_args) => media_queue_remove_main(
+                                                   &mut client, sub_args).await?,
+        Command::MediaQueueReorder(sub_args) => media_queue_reorder_main(
+                                                    &mut client, sub_args).await?,
         Command::Pause => media_pause_main(&mut client).await?,
         Command::Play => media_play_main(&mut client).await?,
         Command::Seek(sub_args) => media_seek_main(&mut client, sub_args).await?,
@@ -264,7 +359,7 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
 }
 
 async fn status_single(client: &mut Client) -> Result<()> {
-    let receiver_status = client.receiver_status().await?;
+    let receiver_status = client.receiver_status(RECEIVER_ID.to_string()).await?;
 
     print_receiver_status(&receiver_status);
 
@@ -272,17 +367,31 @@ async fn status_single(client: &mut Client) -> Result<()> {
         receiver_status.applications.iter().filter(
             |app| app.has_namespace(MEDIA_NS))
     {
-        let session = media_app.to_app_session(RECEIVER_ID.to_string())?;
-        client.connection_connect(session.app_destination_id.clone()).await?;
-        let media_status = client.media_status(session, /* media_session_id: */ None).await?;
+        let app_session = media_app.to_app_session(RECEIVER_ID.to_string())?;
+        client.connection_connect(app_session.app_destination_id.clone()).await?;
+        let media_status = client.media_status(app_session.clone(),
+                                               /* media_session_id: */ None).await?;
         print_media_status(&media_status);
+
+        if let Some(media_session_id) = media_status.try_find_media_session_id().ok() {
+            let media_session = MediaSession {
+                app_session: app_session.clone(),
+                media_session_id,
+            };
+            let item_ids = client.media_queue_get_item_ids(media_session).await?;
+            println!("Queue item IDs for media_session_id {media_session_id}: {item_ids:#?}");
+
+            let media_status_entry = media_status.entries.first().unwrap();
+            println!("current_item_id = {:?}",
+                     media_status_entry.current_item_id);
+        }
     }
 
     Ok(())
 }
 
 async fn app_stop_main(client: &mut Client) -> Result<()> {
-    let initial_status = client.receiver_status().await?;
+    let initial_status = client.receiver_status(RECEIVER_ID.to_string()).await?;
 
     println!("initial_status = {initial_status:#?}");
 
@@ -342,27 +451,68 @@ async fn media_edit_tracks_info_main(client: &mut Client, sub_args: MediaEditTra
                           },
     };
 
-    let media_session = get_media_session(client).await?;
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
     let media_status = client.media_edit_tracks_info(
                            media_session,
                            args
                        ).await?;
 
     print_media_status(&media_status);
+
+    status_single(client).await?;
+
+    Ok(())
+}
+
+async fn media_launch_main(client: &mut Client) -> Result<()> {
+    let _app_session = client.media_get_or_launch_default_app_session(
+        RECEIVER_ID.to_string()).await?;
+
+    Ok(())
+}
+
+async fn media_load_main(client: &mut Client, sub_args: MediaLoadArgs) -> Result<()> {
+    let load_args = payload::media::LoadRequestArgs::from_url(
+        &sub_args.url);
+
+    let _media_session = media_load(client, load_args).await?;
+
     Ok(())
 }
 
 async fn media_pause_main(client: &mut Client) -> Result<()> {
-    let media_session = get_media_session(client).await?;
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
     let media_status = client.media_pause(media_session).await?;
     print_media_status(&media_status);
     Ok(())
 }
 
 async fn media_play_main(client: &mut Client) -> Result<()> {
-    let media_session = get_media_session(client).await?;
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
     let media_status = client.media_play(media_session).await?;
     print_media_status(&media_status);
+    Ok(())
+}
+
+async fn media_queue_get_items_main(client: &mut Client, sub_args: MediaQueueGetItemsArgs)
+-> Result<()>
+{
+    let args = payload::media::QueueGetItemsRequestArgs {
+        custom_data: CustomData::default(),
+        item_ids: sub_args.items,
+    };
+
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let items = client.media_queue_get_items(media_session, args).await?;
+    println!("Queue items: {items:#?}");
+    Ok(())
+}
+
+async fn media_queue_get_item_ids_main(client: &mut Client) -> Result<()>
+{
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let item_ids = client.media_queue_get_item_ids(media_session).await?;
+    println!("Queue item IDs: {item_ids:#?}");
     Ok(())
 }
 
@@ -383,21 +533,115 @@ async fn media_queue_jump_main(client: &mut Client, sub_args: MediaQueueJumpArgs
                    _ sub_args = {sub_args:#?}");
         };
 
-    let media_session = get_media_session(client).await?;
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
     let media_status = client.media_queue_update(media_session, args).await?;
     print_media_status(&media_status);
+
+    status_single(client).await?;
+
+    Ok(())
+}
+
+async fn media_queue_insert_main(client: &mut Client, sub_args: MediaQueueInsertArgs)
+-> Result<()>
+{
+    let args = payload::media::QueueInsertRequestArgs {
+        custom_data: CustomData::default(),
+        insert_before: sub_args.before,
+        items: sub_args.items.to_items()?,
+    };
+
+    let media_session = client.media_get_default_media_session(
+                            RECEIVER_ID.into()).await?;
+    let media_status = client.media_queue_insert(media_session, args).await?;
+    print_media_status(&media_status);
+
+    status_single(client).await?;
+
+    Ok(())
+}
+
+async fn media_queue_load_main(client: &mut Client, sub_args: MediaQueueLoadArgs) -> Result<()> {
+    let args = payload::media::QueueLoadRequestArgs {
+        custom_data: CustomData::default(),
+        items: sub_args.items.to_items()?,
+
+        // TODO: From args
+        repeat_mode: payload::media::RepeatMode::default(),
+
+        // TODO: From args
+        start_index: 0,
+    };
+
+    let app_session = client.media_get_or_launch_default_app_session(RECEIVER_ID.into()).await?;
+    let media_status = client.media_queue_load(app_session, args).await?;
+    print_media_status(&media_status);
+
+    status_single(client).await?;
+
+    Ok(())
+}
+
+async fn media_queue_remove_main(client: &mut Client, sub_args: MediaQueueRemoveArgs)
+-> Result<()>
+{
+    let args = payload::media::QueueRemoveRequestArgs {
+        custom_data: CustomData::default(),
+
+        // TODO: Take as arg
+        current_item_id: None,
+
+        // TODO: Take as arg
+        current_time: None,
+
+        item_ids: sub_args.items,
+    };
+
+    let media_session = client.media_get_default_media_session(
+                            RECEIVER_ID.into()).await?;
+    let media_status = client.media_queue_remove(media_session, args).await?;
+    print_media_status(&media_status);
+
+    status_single(client).await?;
+
+    Ok(())
+}
+
+async fn media_queue_reorder_main(client: &mut Client, sub_args: MediaQueueReorderArgs)
+-> Result<()>
+{
+    let args = payload::media::QueueReorderRequestArgs {
+        custom_data: CustomData::default(),
+
+        // TODO: Take as arg
+        current_item_id: None,
+
+        // TODO: Take as arg
+        current_time: None,
+
+        insert_before: sub_args.before,
+        item_ids: sub_args.items,
+    };
+
+    let media_session = client.media_get_default_media_session(
+                            RECEIVER_ID.into()).await?;
+    let media_status = client.media_queue_reorder(media_session, args).await?;
+    print_media_status(&media_status);
+
+    status_single(client).await?;
+
     Ok(())
 }
 
 async fn media_stop_main(client: &mut Client) -> Result<()> {
-    let media_session = get_media_session(client).await?;
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
     let media_status = client.media_stop(media_session).await?;
     print_media_status(&media_status);
     Ok(())
 }
 
 async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> {
-    let media_session = get_media_session(client).await?;
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
     let media_status = client.media_seek(media_session,
                                          sub_args.time,
                                          sub_args.resume_state,
@@ -407,20 +651,7 @@ async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> 
     Ok(())
 }
 
-async fn media_load_main(client: &mut Client, sub_args: MediaLoadArgs) -> Result<()> {
-    status_single(client).await?;
-
-    let load_args = payload::media::LoadRequestArgs::from_url(
-        &sub_args.url);
-
-    let _media_session = media_load(client, load_args).await?;
-
-    Ok(())
-}
-
 async fn demo_main(client: &mut Client, sub_args: DemoArgs) -> Result<()> {
-    status_single(client).await?;
-
     let load_args = payload::media::LoadRequestArgs::from_url(
         "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
 
@@ -458,77 +689,25 @@ async fn heartbeat_main(client: &mut Client) -> Result<()>
     Ok(())
 }
 
-#[named]
-async fn get_media_session(client: &mut Client) -> Result<MediaSession> {
-    const FUNCTION_PATH: &str = function_path!();
-
-    let receiver_status = client.receiver_status().await?;
-
-    let Some(media_app)
-        = receiver_status.applications.iter()
-            .find(|app| app.has_namespace(MEDIA_NS)) else
-    {
-        bail!("{FUNCTION_PATH}: No media app found.\n\
-               _ receiver_status = {receiver_status:#?}");
-    };
-
-    let app_session = media_app.to_app_session(RECEIVER_ID.to_string())?;
-    client.connection_connect(app_session.app_destination_id.clone()).await?;
-
-    let media_status = client.media_status(app_session.clone(),
-                                           /* media_session_id: */ None).await?;
-
-    let Some(media_session_id) =
-        media_status.entries.first()
-            .map(|s| s.media_session_id) else
-    {
-        bail!("{FUNCTION_PATH}: No media status entry\n\
-               _ receiver_status = {media_status:#?}");
-    };
-
-    Ok(MediaSession {
-        app_session,
-        media_session_id,
-    })
-}
-
-#[named]
 async fn media_load(client: &mut Client, load_args: payload::media::LoadRequestArgs)
  -> Result<MediaSession>
 {
-    const FUNCTION_PATH: &str = function_path!();
+    let app_session = client.media_get_or_launch_default_app_session(
+        RECEIVER_ID.to_string()).await?;
 
-    status_single(client).await?;
-
-    let (app_session, launch_status) =
-        client.media_launch_default(RECEIVER_ID.into()).await?;
-    println!(" # launched:\n\
-              _  app_session = {app_session:#?}\n\
-              _  status = {launch_status_small:#?}\n\n",
-             launch_status_small =
-                 payload::receiver::small_debug::ReceiverStatus(&launch_status));
-
-    let load_res = client.media_load(app_session.clone(), load_args).await?;
-    println!("media_load_res = {load_res:#?}",
-             load_res = payload::media::small_debug::MediaStatus(&load_res));
-
-    let Some(media_session_id) =
-        load_res.entries.first()
-            .map(|s| s.media_session_id) else
-    {
-        bail!("{FUNCTION_PATH}: No media status entry\n\
-               _ media_status = {load_res:#?}");
-    };
+    let load_status = client.media_load(app_session.clone(), load_args).await?;
+    println!("media_load_res = {load_status:#?}",
+             load_status = payload::media::small_debug::MediaStatus(&load_status));
 
     Ok(MediaSession {
         app_session,
-        media_session_id,
+        media_session_id: load_status.try_find_media_session_id()?,
     })
 }
 
 fn print_receiver_status(receiver_status: &payload::receiver::Status) {
     if tracing::event_enabled!(tracing::Level::TRACE) {
-    println!("receiver_status (full) = {receiver_status:#?}");
+        println!("receiver_status (full) = {receiver_status:#?}");
     }
 
     let receiver_status_small = payload::receiver::small_debug::ReceiverStatus(&receiver_status);
@@ -560,18 +739,38 @@ impl TryInto<payload::media::TextTrackStyle> for TextTrackStyleArgs {
     type Error = Error;
 
     fn try_into(self) -> Result<payload::media::TextTrackStyle> {
+        let preset = match self.preset {
+            TextTrackStylePreset::Basic => payload::media::TextTrackStyle::basic(),
+            TextTrackStylePreset::Empty => payload::media::TextTrackStyle::empty(),
+        };
+
         Ok(payload::media::TextTrackStyle {
-            background_color: self.background_color,
+            background_color: self.background_color.or(preset.background_color),
             custom_data: CustomData::default(),
-            edge_color: self.edge_color,
-            // TODO: edge_type: Option<TextTrackEdgeType>,
-            font_family: self.font_family,
-            // TODO: font_generic_family: Option<FontGenericFamily>,
-            font_scale: self.font_scale,
-            foreground_color: self.foreground_color,
-            window_color: self.window_color,
-            window_rounded_corner_radius: self.window_rounded_corner_radius,
-            // TODO: window_type: Option<TextTrackWindowType>,
+            edge_color: self.edge_color.or(preset.edge_color),
+            edge_type: self.edge_type.or(preset.edge_type),
+            font_family: self.font_family.or(preset.font_family),
+            font_generic_family: self.font_generic_family.or(preset.font_generic_family),
+            font_scale: self.font_scale.or(preset.font_scale),
+            font_style: self.font_style.or(preset.font_style),
+            foreground_color: self.foreground_color.or(preset.foreground_color),
+            window_color: self.window_color.or(preset.window_color),
+            window_rounded_corner_radius: self.window_rounded_corner_radius
+                                    .or(preset.window_rounded_corner_radius),
+            window_type: self.window_type.or(preset.window_type),
+        })
+    }
+}
+
+impl QueueItemsArgs {
+    fn to_items(&self) -> Result<Vec<payload::media::QueueItem>>
+    {
+        Ok(if let Some(ref items_json) = self.items_json {
+            json5::from_str(items_json)?
+        } else {
+            self.urls.iter()
+                .map(|url| payload::media::QueueItem::from_url(url))
+                .collect()
         })
     }
 }

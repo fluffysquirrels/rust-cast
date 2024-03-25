@@ -1,3 +1,4 @@
+use anyhow::bail;
 use crate::{
     async_client::Result,
     types::{AppId, AppSession,
@@ -11,6 +12,7 @@ use serde_with::skip_serializing_none;
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Display},
+    str::FromStr,
     sync::atomic::{AtomicI32, Ordering},
 };
 
@@ -174,6 +176,9 @@ pub mod heartbeat {
     }
 }
 
+/// Messages and types for the media namespace, as used by the Default Media Receiver app.
+///
+/// Reference: <https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages>
 pub mod media {
     use super::*;
 
@@ -186,13 +191,22 @@ pub mod media {
     pub const MESSAGE_REQUEST_TYPE_STOP: MessageTypeConst = "STOP";
     pub const MESSAGE_REQUEST_TYPE_SEEK: MessageTypeConst = "SEEK";
     pub const MESSAGE_REQUEST_TYPE_EDIT_TRACKS_INFO: MessageTypeConst = "EDIT_TRACKS_INFO";
-    pub const _MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS: MessageTypeConst = "QUEUE_GET_ITEM_IDS";
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_RANGE: MessageTypeConst
+        = "QUEUE_GET_ITEM_RANGE";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
     pub const MESSAGE_REQUEST_TYPE_QUEUE_INSERT: MessageTypeConst = "QUEUE_INSERT";
     pub const MESSAGE_REQUEST_TYPE_QUEUE_LOAD: MessageTypeConst = "QUEUE_LOAD";
+
+    // Already supported by `QUEUE_UPDATE` with QueueUpdateRequestArgs::next()
     pub const _MESSAGE_REQUEST_TYPE_QUEUE_NEXT: MessageTypeConst = "QUEUE_NEXT";
+
+    // Already supported by `QUEUE_UPDATE` with QueueUpdateRequestArgs::prev()
     pub const _MESSAGE_REQUEST_TYPE_QUEUE_PREV: MessageTypeConst = "QUEUE_PREV";
+
     pub const MESSAGE_REQUEST_TYPE_QUEUE_REMOVE: MessageTypeConst = "QUEUE_REMOVE";
     pub const MESSAGE_REQUEST_TYPE_QUEUE_REORDER: MessageTypeConst = "QUEUE_REORDER";
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_SHUFFLE: MessageTypeConst = "QUEUE_SHUFFLE";
     pub const MESSAGE_REQUEST_TYPE_QUEUE_UPDATE: MessageTypeConst = "QUEUE_UPDATE";
 
     pub const MESSAGE_RESPONSE_TYPE_MEDIA_STATUS: MessageTypeConst = "MEDIA_STATUS";
@@ -201,6 +215,8 @@ pub mod media {
     pub const MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE: MessageTypeConst
         = "INVALID_PLAYER_STATE";
     pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageTypeConst = "INVALID_REQUEST";
+    pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEM_IDS: MessageTypeConst = "QUEUE_ITEM_IDS";
+    pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEMS: MessageTypeConst = "QUEUE_ITEMS";
 
     mod shared {
         use super::*;
@@ -233,6 +249,22 @@ pub mod media {
             pub stream_type: Option<StreamType>,
             pub text_track_style: Option<TextTrackStyle>,
             pub tracks: Option<Vec<Track>>,
+        }
+
+        impl Media {
+            pub fn from_url(url: impl Into<String>) -> Media {
+                Media {
+                    content_id: url.into(),
+                    content_type: String::default(),
+                    content_url: None,
+                    custom_data: CustomData::default(),
+                    duration: None,
+                    metadata: None,
+                    stream_type: None,
+                    text_track_style: None,
+                    tracks: None,
+                }
+            }
         }
 
         #[skip_serializing_none]
@@ -288,8 +320,8 @@ pub mod media {
 
             // `autoplay` seems to sometimes be serialised as a JSON string, like `"false"`.
             // Support deserialising from a bool or string, serialise as a bool.
-            #[serde_as(as = "serde_with::PickFirst<(_, serde_with::DisplayFromStr)>")]
-            pub autoplay: bool,
+//            #[serde_as(as = "serde_with::PickFirst<(_, serde_with::DisplayFromStr)>")]
+//            pub autoplay: bool,
 
             #[serde(default)]
             pub custom_data: CustomData,
@@ -305,11 +337,50 @@ pub mod media {
             pub start_time: Option<Seconds>,
         }
 
+        impl Default for QueueItem {
+            fn default() -> QueueItem {
+                QueueItem {
+                    active_track_ids: None,
+                    // autoplay: true,
+                    custom_data: CustomData::default(),
+                    item_id: None,
+                    media: None,
+                    order_id: None,
+                    playback_duration: None,
+                    preload_time: None,
+                    start_time: None,
+                }
+            }
+        }
+
+        impl QueueItem {
+            pub fn from_url(url: &str) -> QueueItem {
+                QueueItem {
+                    media: Some(Media::from_url(url)),
+                    .. QueueItem::default()
+                }
+            }
+        }
+
         #[derive(Clone, Debug, Deserialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Status {
             #[serde(rename = "status")]
             pub entries: Vec<StatusEntry>,
+        }
+
+        impl Status {
+            pub fn try_find_media_session_id(&self) -> Result<MediaSessionId> {
+                let Some(media_session_id) =
+                    self.entries.first()
+                        .map(|s| s.media_session_id) else
+                {
+                    bail!("No media status entry\n\
+                           _ media_status = {self:#?}");
+                };
+
+                Ok(media_session_id)
+            }
         }
 
         #[derive(Clone, Debug, Deserialize)]
@@ -349,6 +420,7 @@ pub mod media {
             // pub volume: crate::payload::receiver::Volume,
         }
 
+        #[serde_with::serde_as]
         #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -359,14 +431,23 @@ pub mod media {
             pub custom_data: CustomData,
 
             pub edge_color: Option<Color>,
+
             // TODO: pub edge_type: Option<TextTrackEdgeType>,
+            pub edge_type: Option<String>,
+
             pub font_family: Option<String>,
+
             // TODO: pub font_generic_family: Option<FontGenericFamily>,
+            pub font_generic_family: Option<String>,
 
             /// Default scaling is 1.0.
+            #[serde_as(as = "serde_with::PickFirst<(_, FontScale)>")]
+            #[serde(default)]
             pub font_scale: Option<f64>,
 
             // TODO: pub font_style: Option<FontStyle>,
+            pub font_style: Option<String>,
+
             pub foreground_color: Option<Color>,
             pub window_color: Option<Color>,
 
@@ -375,6 +456,46 @@ pub mod media {
             pub window_rounded_corner_radius: Option<f64>,
 
             // TODO: pub window_type: Option<TextTrackWindowType>,
+            pub window_type: Option<String>,
+        }
+
+        serde_with::serde_conv!(
+            FontScale,
+            Option<f64>,
+            |fs: &Option<f64>| *fs,
+            |ser: Option<String>| -> Result<Option<f64>, std::num::ParseFloatError> {
+                ser.map(|s| f64::from_str(&s)).transpose()
+            }
+        );
+
+        impl TextTrackStyle {
+            pub fn empty() -> TextTrackStyle {
+                TextTrackStyle {
+                    background_color: None,
+                    custom_data: CustomData::default(),
+                    edge_color: None,
+                    edge_type: None,
+                    font_family: None,
+                    font_generic_family: None,
+                    font_scale: None,
+                    font_style: None,
+                    foreground_color: None,
+                    window_color: None,
+                    window_rounded_corner_radius: None,
+                    window_type: None,
+                }
+            }
+
+            pub fn basic() -> TextTrackStyle {
+                TextTrackStyle {
+                    background_color: Some("#00000099".to_string()),
+                    font_family: Some("Droid Sans".to_string()),
+                    font_scale: Some(1.2),
+                    foreground_color: Some("#ffff00ff".to_string()),
+
+                    .. TextTrackStyle::empty()
+                }
+            }
         }
 
         #[skip_serializing_none]
@@ -425,16 +546,16 @@ pub mod media {
         #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum RepeatMode {
-            #[serde(alias = "REPEAT_OFF")]
+            #[serde(rename = "REPEAT_OFF")]
             Off,
 
-            #[serde(alias = "REPEAT_ALL")]
+            #[serde(rename = "REPEAT_ALL")]
             All,
 
-            #[serde(alias = "REPEAT_ALL_AND_SHUFFLE")]
+            #[serde(rename = "REPEAT_ALL_AND_SHUFFLE")]
             AllAndShuffle,
 
-            #[serde(alias = "REPEAT_SINGLE")]
+            #[serde(rename = "REPEAT_SINGLE")]
             Single,
 
             #[serde(untagged, skip_serializing)]
@@ -616,6 +737,18 @@ pub mod media {
         }
     }
 
+    macro_rules! simple_media_request {
+        ($name: ident, $msg_type_name: path) => {
+            #[derive(Debug, Serialize)]
+            pub struct $name(pub MediaRequestCommon);
+
+            impl RequestInner for $name {
+                const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+                const TYPE_NAME: MessageTypeConst = $msg_type_name;
+            }
+        };
+    }
+
     #[skip_serializing_none]
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -765,10 +898,66 @@ pub mod media {
     #[skip_serializing_none]
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
+    pub struct QueueGetItemsRequest {
+        #[serde(flatten)]
+        pub args: QueueGetItemsRequestArgs,
+
+        pub media_session_id: MediaSessionId,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueGetItemsRequestArgs {
+        pub custom_data: CustomData,
+        pub item_ids: Vec<ItemId>,
+    }
+
+    impl RequestInner for QueueGetItemsRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS;
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueGetItemsResponse {
+        pub items: Vec<QueueItem>,
+    }
+
+    impl ResponseInner for QueueGetItemsResponse {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+            MESSAGE_RESPONSE_TYPE_QUEUE_ITEMS,
+        ];
+    }
+
+
+
+    simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueGetItemIdsResponse {
+        pub item_ids: Vec<ItemId>,
+    }
+
+    impl ResponseInner for QueueGetItemIdsResponse {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+            MESSAGE_RESPONSE_TYPE_QUEUE_ITEM_IDS,
+        ];
+    }
+
+
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct QueueInsertRequest {
         #[serde(flatten)]
         pub args: QueueInsertRequestArgs,
 
+        pub media_session_id: MediaSessionId,
         pub session_id: SessionId,
     }
 
@@ -822,11 +1011,37 @@ pub mod media {
     #[skip_serializing_none]
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
+    pub struct QueueRemoveRequest {
+        #[serde(flatten)]
+        pub args: QueueRemoveRequestArgs,
+        pub media_session_id: MediaSessionId,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueRemoveRequestArgs {
+        pub custom_data: CustomData,
+
+        pub current_item_id: Option<ItemId>,
+        pub current_time: Option<Seconds>,
+        pub item_ids: Vec<ItemId>,
+    }
+
+    impl RequestInner for QueueRemoveRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_REMOVE;
+    }
+
+
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
     pub struct QueueReorderRequest {
         #[serde(flatten)]
         pub args: QueueReorderRequestArgs,
-
-        pub session_id: SessionId,
+        pub media_session_id: MediaSessionId,
     }
 
     #[skip_serializing_none]
@@ -835,8 +1050,14 @@ pub mod media {
     pub struct QueueReorderRequestArgs {
         pub custom_data: CustomData,
 
+        pub current_item_id: Option<ItemId>,
+        pub current_time: Option<Seconds>,
+
         /// When None, re-order the items to the end of the queue.
         pub insert_before: Option<ItemId>,
+
+        /// ID's of the items to be reordered, in the new order.
+        /// Other items will keep their existing order.
         pub item_ids: Vec<ItemId>,
     }
 
@@ -855,7 +1076,7 @@ pub mod media {
         #[serde(flatten)]
         pub args: QueueUpdateRequestArgs,
 
-        pub session_id: SessionId,
+        pub media_session_id: MediaSessionId,
     }
 
     #[skip_serializing_none]
@@ -863,6 +1084,7 @@ pub mod media {
     #[serde(rename_all = "camelCase")]
     pub struct QueueUpdateRequestArgs {
         pub current_item_id: Option<ItemId>,
+        pub current_time: Option<Seconds>,
         pub custom_data: CustomData,
         pub items: Option<Vec<QueueItem>>,
 
@@ -902,6 +1124,7 @@ pub mod media {
         pub fn empty() -> QueueUpdateRequestArgs {
             QueueUpdateRequestArgs {
                 current_item_id: None,
+                current_time: None,
                 custom_data: CustomData::default(),
                 items: None,
                 jump: None,
@@ -915,9 +1138,10 @@ pub mod media {
     #[serde(rename_all = "camelCase")]
     pub struct SeekRequest {
         pub media_session_id: MediaSessionId,
+        pub custom_data: CustomData,
+
         pub current_time: Option<Seconds>,
         pub resume_state: Option<ResumeState>,
-        pub custom_data: CustomData,
     }
 
     impl RequestInner for SeekRequest {
@@ -936,18 +1160,6 @@ pub mod media {
     }
 
 
-
-    macro_rules! simple_media_request {
-        ($name: ident, $msg_type_name: path) => {
-            #[derive(Debug, Serialize)]
-            pub struct $name(pub MediaRequestCommon);
-
-            impl RequestInner for $name {
-                const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-                const TYPE_NAME: MessageTypeConst = $msg_type_name;
-            }
-        };
-    }
 
     simple_media_request!(PlayRequest,  MESSAGE_REQUEST_TYPE_PLAY);
     simple_media_request!(PauseRequest, MESSAGE_REQUEST_TYPE_PAUSE);
