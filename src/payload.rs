@@ -331,7 +331,11 @@ pub mod media {
             /// and will be present for responses.
             pub item_id: Option<ItemId>,
             pub media: Option<Media>,
+
+            /// This field isn't documented but is returned by the Chromecast in testing.
+            /// From the name, it might be the index of this item in the queue.
             pub order_id: Option<i32>,
+
             pub playback_duration: Option<Seconds>,
             pub preload_time: Option<Seconds>,
             pub start_time: Option<Seconds>,
@@ -432,22 +436,18 @@ pub mod media {
 
             pub edge_color: Option<Color>,
 
-            // TODO: pub edge_type: Option<TextTrackEdgeType>,
-            pub edge_type: Option<String>,
+            pub edge_type: Option<TextTrackEdgeType>,
 
             pub font_family: Option<String>,
 
-            // TODO: pub font_generic_family: Option<FontGenericFamily>,
-            pub font_generic_family: Option<String>,
+            pub font_generic_family: Option<FontGenericFamily>,
 
             /// Default scaling is 1.0.
             #[serde_as(as = "serde_with::PickFirst<(_, FontScale)>")]
             #[serde(default)]
             pub font_scale: Option<f64>,
 
-            // TODO: pub font_style: Option<FontStyle>,
-            pub font_style: Option<String>,
-
+            pub font_style: Option<FontStyle>,
             pub foreground_color: Option<Color>,
             pub window_color: Option<Color>,
 
@@ -455,8 +455,7 @@ pub mod media {
             /// This value will be ignored if window_type is not RoundedCorners.
             pub window_rounded_corner_radius: Option<f64>,
 
-            // TODO: pub window_type: Option<TextTrackWindowType>,
-            pub window_type: Option<String>,
+            pub window_type: Option<TextTrackWindowType>,
         }
 
         serde_with::serde_conv!(
@@ -490,7 +489,9 @@ pub mod media {
                 TextTrackStyle {
                     background_color: Some("#00000099".to_string()),
                     font_family: Some("Droid Sans".to_string()),
+                    font_generic_family: Some(FontGenericFamily::SansSerif),
                     font_scale: Some(1.2),
+                    font_style: Some(FontStyle::Normal),
                     foreground_color: Some("#ffff00ff".to_string()),
 
                     .. TextTrackStyle::empty()
@@ -517,6 +518,37 @@ pub mod media {
 
             #[serde(rename = "type")]
             pub track_type: Option<TrackType>,
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum FontGenericFamily {
+            SansSerif,
+            MonospacedSansSerif,
+            Serif,
+            MonospacedSerif,
+            Casual,
+            Cursive,
+            SmallCapitals,
+
+            #[serde(untagged, skip_serializing)]
+            #[clap(skip)]
+            Unknown(String),
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum FontStyle {
+            Normal,
+            Bold,
+            BoldItalic,
+            Italic,
+
+            #[serde(untagged, skip_serializing)]
+            #[clap(skip)]
+            Unknown(String),
         }
 
         #[derive(Clone, Debug, Deserialize)]
@@ -583,6 +615,21 @@ pub mod media {
         }
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum TextTrackEdgeType {
+            None,
+            Outline,
+            DropShadow,
+            Raised,
+            Depressed,
+
+            #[serde(untagged, skip_serializing)]
+            #[clap(skip)]
+            Unknown(String),
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum TextTrackType {
             Captions,
@@ -592,6 +639,19 @@ pub mod media {
             Subtitles,
 
             #[serde(untagged, skip_serializing)]
+            Unknown(String),
+        }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum TextTrackWindowType {
+            None,
+            Normal,
+            RoundedCorners,
+
+            #[serde(untagged, skip_serializing)]
+            #[clap(skip)]
             Unknown(String),
         }
 

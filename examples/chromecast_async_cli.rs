@@ -29,7 +29,23 @@ enum Command {
     AppStop,
     Demo(DemoArgs),
     Heartbeat,
+
+    /// Update the current active tracks, or text track style.
+    ///
+    /// Subtitles are configured as text tracks.
+    ///
+    /// Color arguments must be in the CSS-like format '#RRGGBBAA',
+    /// with each pair of letters representing a byte in hex format
+    /// for that color channel's intensity or the color's opacity (alpha channel).
+    ///
+    /// Color examples:
+    ///
+    ///   * #ff0000ff (red, 100% opacity)
+    ///   * #ffff0020 (yellow, 0x20 / 0xff = 32/256 opacity)
+    ///   * #00000000 (0% opacity, transparent)
+    #[clap(verbatim_doc_comment)]
     MediaEditTracksInfo(MediaEditTracksInfoArgs),
+
     MediaLaunch,
     MediaLoad(MediaLoadArgs),
     MediaQueueGetItemIds,
@@ -65,6 +81,7 @@ struct MediaEditTracksInfoArgs {
           value_delimiter = ',')]
     active_track_ids: Option<Vec<payload::media::TrackId>>,
 
+    /// Pass this to update `TextTrackStyle`, otherwise it will be left as it is.
     #[arg(long, visible_alias = "text-style",
           default_value_t = false)]
     set_text_track_style: bool,
@@ -196,35 +213,32 @@ struct TextTrackStyleArgs {
     #[arg(long, value_enum, default_value_t = TextTrackStylePreset::Basic)]
     preset: TextTrackStylePreset,
 
-    #[arg(long)]
+    #[arg(long, help = COLOR_ARG_HELP)]
     background_color: Option<ColorArg>,
 
-    #[arg(long)]
+    #[arg(long, help = COLOR_ARG_HELP)]
     edge_color: Option<ColorArg>,
 
-    // TODO: edge_type: Option<TextTrackEdgeType>,
-    #[arg(long)]
-    edge_type: Option<String>,
+    #[arg(long, value_enum)]
+    edge_type: Option<payload::media::TextTrackEdgeType>,
 
     #[arg(long)]
     font_family: Option<String>,
 
-    // TODO: font_generic_family: Option<FontGenericFamily>,
-    #[arg(long)]
-    font_generic_family: Option<String>,
+    #[arg(long, value_enum)]
+    font_generic_family: Option<payload::media::FontGenericFamily>,
 
-    /// Default scaling is 1.0.
+    /// A positive float. Default scaling is 1.0.
     #[arg(long)]
     font_scale: Option<f64>,
 
-    // TODO: font_style: Option<FontStyle>,
-    #[arg(long)]
-    font_style: Option<String>,
+    #[arg(long, value_enum)]
+    font_style: Option<payload::media::FontStyle>,
 
-    #[arg(long)]
+    #[arg(long, help = COLOR_ARG_HELP)]
     foreground_color: Option<ColorArg>,
 
-    #[arg(long)]
+    #[arg(long, help = COLOR_ARG_HELP)]
     window_color: Option<ColorArg>,
 
     /// Rounded corner radius absolute value in pixels (px).
@@ -232,9 +246,8 @@ struct TextTrackStyleArgs {
     #[arg(long)]
     window_rounded_corner_radius: Option<f64>,
 
-    // TODO: window_type: Option<TextTrackWindowType>,
-    #[arg(long)]
-    window_type: Option<String>,
+    #[arg(long, value_enum)]
+    window_type: Option<payload::media::TextTrackWindowType>,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
@@ -245,9 +258,9 @@ enum TextTrackStylePreset {
 
 // TODO: Probably validate, use a strongly typed value.
 type ColorArg = String;
+const COLOR_ARG_HELP: &str = "Color arguments must be in the CSS-like format '#RRGGBBAA'";
 
 const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
-
 
 #[tokio::main]
 // #[named]
