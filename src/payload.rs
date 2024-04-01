@@ -997,15 +997,26 @@ pub mod media {
     simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
 
     #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub struct QueueGetItemIdsResponse {
-        pub item_ids: Vec<ItemId>,
+    #[serde(tag = "type", rename_all = "camelCase")]
+    pub enum QueueGetItemIdsResponse {
+        #[serde(rename = "QUEUE_ITEM_IDS")]
+        Ok {
+            item_ids: Vec<ItemId>,
+        },
+
+        #[serde(rename = "INVALID_PLAYER_STATE")]
+        InvalidPlayerState,
+
+        #[serde(rename = "INVALID_REQUEST")]
+        InvalidRequest { reason: String },
     }
 
     impl ResponseInner for QueueGetItemIdsResponse {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
         const TYPE_NAMES: &'static [MessageTypeConst] = &[
             MESSAGE_RESPONSE_TYPE_QUEUE_ITEM_IDS,
+            MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE,
+            MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
     }
 

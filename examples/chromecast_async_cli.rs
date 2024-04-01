@@ -258,7 +258,8 @@ enum TextTrackStylePreset {
 
 // TODO: Probably validate, use a strongly typed value.
 type ColorArg = String;
-const COLOR_ARG_HELP: &str = "Color arguments must be in the CSS-like format '#RRGGBBAA'";
+const COLOR_ARG_HELP: &str =
+    "Color arguments must be in the CSS-like case-insensitive format '#RRGGBBAA'";
 
 const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
 
@@ -391,8 +392,16 @@ async fn status_single(client: &mut Client) -> Result<()> {
                 app_session: app_session.clone(),
                 media_session_id,
             };
-            let item_ids = client.media_queue_get_item_ids(media_session).await?;
-            println!("Queue item IDs for media_session_id {media_session_id}: {item_ids:#?}");
+
+            if let Some(item_ids) = client.media_queue_get_item_ids(media_session).await
+                .inspect_err(|err| tracing::error!(err = format!("{err:#?}"),
+                                                   "media_queue_get_item_ids error"))
+                .ok()
+            {
+                println!("Queue item IDs for media_session_id {media_session_id}: \
+                          {item_ids:#?}");
+            }
+
 
             let media_status_entry = media_status.entries.first().unwrap();
             println!("current_item_id = {:?}",

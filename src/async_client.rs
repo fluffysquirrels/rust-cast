@@ -601,6 +601,7 @@ impl Client {
         self.simple_media_request(media_session, payload::media::PauseRequest).await
     }
 
+    #[named]
     pub async fn media_queue_get_item_ids(&mut self,
                                           media_session: MediaSession)
     -> Result<Vec<payload::media::ItemId>> {
@@ -613,7 +614,13 @@ impl Client {
         let resp: Payload<payload::media::QueueGetItemIdsResponse>
             = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
 
-        Ok(resp.inner.item_ids)
+        let payload::media::QueueGetItemIdsResponse::Ok { item_ids } = resp.inner else {
+            bail!("{method_path}: Error response\n\
+                   _ response = {resp:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(item_ids)
     }
 
     pub async fn media_queue_get_items(&mut self,
@@ -832,6 +839,7 @@ impl Client {
             }))
     }
 
+    /// Close in an orderly way. The returned Future must be polled to completion.
     pub async fn close(mut self) -> Result<()> {
         let _: Box<()> = self.task_cmd::<()>(TaskCmdType::Shutdown).await?;
 
@@ -841,6 +849,20 @@ impl Client {
         tokio::time::timeout(LOCAL_TASK_COMMAND_TIMEOUT, join_fut).await???;
 
         Ok(())
+    }
+
+    /// Spawn a task to close the Client in an orderly way.
+    ///
+    /// Errors will be logged with `tracing`.
+    #[named]
+    pub fn spawn_close(self) {
+        let _handle = tokio::spawn(async move {
+            if let Err(err) = self.close().await {
+                tracing::error!(target: method_path!("Client"),
+                                err = format!("{err:#?}"),
+                                "Err closing Client");
+            }
+        });
     }
 }
 
@@ -1032,6 +1054,8 @@ impl Client {
 impl Drop for Client {
     fn drop(&mut self) {
         if self.task_join_handle.is_some() {
+            // TODO: Call `self.spawn_close()` instead.
+
             tracing::error!("Client: task not stopped before drop.\n\
                              Use Client::close to dispose of Client.");
         }
