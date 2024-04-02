@@ -242,6 +242,7 @@ pub mod app {
     pub const DEFAULT_MEDIA_RECEIVER: AppIdConst = "CC1AD845";
     pub const BACKDROP: AppIdConst = "E8C28D3C";
     pub const NETFLIX: AppIdConst = "CA5E8412";
+    pub const SPOTIFY: AppIdConst = "CC32E753";
     pub const YOUTUBE: AppIdConst = "233637DE";
 }
 

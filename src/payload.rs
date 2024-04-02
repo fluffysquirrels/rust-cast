@@ -701,7 +701,7 @@ pub mod media {
     pub use self::shared::*;
 
     pub mod small_debug {
-        use crate::util::fmt::DebugInline;
+        use crate::util::fmt::{DebugNoAlternate, opt_field};
         use super::*;
 
         pub struct MediaStatus<'a>(pub &'a super::Status);
@@ -730,27 +730,24 @@ pub mod media {
 
         impl<'a> Debug for MediaStatusEntry<'a> {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                // `DebugInline` is used to override Formatter's `alternate` setting
-                // (i.e. using `{:#?}`) to remove unnecessary whitespace.
-
                 f.debug_struct("MediaStatusEntry")
                     .field("player_state", &self.0.player_state)
                     .field("current_time",
-                           &DebugInline(&format!("{:?}", &self.0.current_time)))
+                           &DebugNoAlternate(&self.0.current_time))
                     .field("media", &self.0.media.as_ref().map(|m| Media(m)))
                     .field("idle_reason",
-                           &DebugInline(&format!("{:?}", &self.0.idle_reason)))
+                           &DebugNoAlternate(&self.0.idle_reason))
                     .field("media_session_id", &self.0.media_session_id)
                     .field("current_item_id",
-                           &DebugInline(&format!("{:?}", &self.0.current_item_id)))
-                    .field("repeat_mode", &DebugInline(&format!("{:?}", &self.0.repeat_mode)))
-                // .field("items", &self.0.items)
+                           &DebugNoAlternate(&self.0.current_item_id))
+                    .field("repeat_mode",
+                           &DebugNoAlternate(&self.0.repeat_mode))
+                    // .field("items", &self.0.items)
 
-                // Volume level seems to be always 1.0, no point showing it.
-                // .field("volume", &Volume(&self.0.volume))
+                    // Volume level seems to be always 1.0, no point showing it.
+                    // .field("volume", &Volume(&self.0.volume))
 
                     .finish()
-                // .finish_non_exhaustive()
             }
         }
 
@@ -759,15 +756,13 @@ pub mod media {
                 f.debug_struct("Media")
                     .field("content_id", &self.0.content_id)
                     .field("content_url", &self.0.content_url)
-                    .field("stream_type", &self.0.stream_type)
+                    .field("stream_type",
+                           &DebugNoAlternate(&self.0.stream_type))
                     .field("content_type", &self.0.content_type)
                     .field("duration",
-                           // Override formatter's `alternate` setting (i.e. using `{:#?}`)
-                           // to remove unnecessary whitespace.
-                           &DebugInline(&format!("{:?}", &self.0.duration)))
+                           &DebugNoAlternate(&self.0.duration))
                     .field("metadata", &self.0.metadata.as_ref().map(|m| Metadata(m)))
                     .finish()
-                // .finish_non_exhaustive()
             }
         }
 
@@ -775,25 +770,17 @@ pub mod media {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 let mut s = f.debug_struct("Metadata");
 
+                opt_field(&mut s, "artist", &self.0.artist);
+                opt_field(&mut s, "album_name", &self.0.album_name);
                 opt_field(&mut s, "title", &self.0.title);
+
                 opt_field(&mut s, "series_title", &self.0.series_title);
                 opt_field(&mut s, "subtitle", &self.0.subtitle);
                 opt_field(&mut s, "season", &self.0.season);
                 opt_field(&mut s, "episode", &self.0.episode);
 
                 s.finish()
-                // s.finish_non_exhaustive()
             }
-        }
-
-        fn opt_field<'a, 'b: 'a>(debug_struct: &mut std::fmt::DebugStruct<'a, 'b>,
-                                 name: &str, value: &Option<impl Debug>)
-        {
-            let Some(ref value) = value else {
-                return;
-            };
-
-            debug_struct.field(name, value);
         }
     }
 
@@ -999,7 +986,7 @@ pub mod media {
     #[derive(Debug, Deserialize)]
     #[serde(tag = "type", rename_all = "camelCase")]
     pub enum QueueGetItemIdsResponse {
-        #[serde(rename = "QUEUE_ITEM_IDS")]
+        #[serde(rename = "QUEUE_ITEM_IDS", rename_all = "camelCase")]
         Ok {
             item_ids: Vec<ItemId>,
         },
@@ -1140,7 +1127,6 @@ pub mod media {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
         const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_REORDER;
     }
-
 
 
 
