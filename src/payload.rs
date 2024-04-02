@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{bail, format_err};
 use crate::{
     async_client::Result,
     types::{AppId, AppSession,
@@ -209,6 +209,8 @@ pub mod media {
     pub const _MESSAGE_REQUEST_TYPE_QUEUE_SHUFFLE: MessageTypeConst = "QUEUE_SHUFFLE";
     pub const MESSAGE_REQUEST_TYPE_QUEUE_UPDATE: MessageTypeConst = "QUEUE_UPDATE";
 
+    pub const MESSAGE_REQUEST_TYPE_SET_PLAYBACK_RATE: MessageTypeConst = "SET_PLAYBACK_RATE";
+
     pub const MESSAGE_RESPONSE_TYPE_MEDIA_STATUS: MessageTypeConst = "MEDIA_STATUS";
     pub const MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED: MessageTypeConst = "LOAD_CANCELLED";
     pub const MESSAGE_RESPONSE_TYPE_LOAD_FAILED: MessageTypeConst = "LOAD_FAILED";
@@ -244,7 +246,7 @@ pub mod media {
             pub custom_data: CustomData,
 
             pub duration: Option<Seconds>,
-            // TODO: pub media_category: Option<MediaCategory>,
+            pub media_category: Option<MediaCategory>,
             pub metadata: Option<Metadata>,
             pub stream_type: Option<StreamType>,
             pub text_track_style: Option<TextTrackStyle>,
@@ -259,11 +261,40 @@ pub mod media {
                     content_url: None,
                     custom_data: CustomData::default(),
                     duration: None,
+                    media_category: None,
                     metadata: None,
                     stream_type: None,
                     text_track_style: None,
                     tracks: None,
                 }
+            }
+
+            pub fn with_track(mut self, track: Track) -> Result<Media> {
+                match &mut self.tracks {
+                    None => self.tracks = Some(vec![
+                        Track {
+                            track_id: track.track_id.or(Some(TRACK_ID_FIRST)),
+                            .. track
+                        }
+                    ]),
+                    Some(tracks) => {
+                        let max_id = tracks.iter()
+                                           .flat_map(|t| t.track_id)
+                                           .max()
+                                           .unwrap_or(0);
+                        let next_id = max_id.checked_add(1)
+                            .ok_or_else(|| format_err!(
+                                "with_track: \
+                                 TrackID overflowed while calculating 1 + current maximum."))?;
+                        tracks.push(
+                            Track {
+                                track_id: Some(next_id),
+                                .. track
+                            });
+                    },
+                };
+
+                Ok(self)
             }
         }
 
@@ -303,7 +334,9 @@ pub mod media {
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct QueueData {
+            pub description: Option<String>,
             pub items: Option<Vec<QueueItem>>,
+            pub id: Option<String>,
             pub name: Option<String>,
             pub repeat_mode: Option<RepeatMode>,
             pub shuffle: Option<bool>,
@@ -332,9 +365,9 @@ pub mod media {
             pub item_id: Option<ItemId>,
             pub media: Option<Media>,
 
-            /// This field isn't documented but is returned by the Chromecast in testing.
-            /// From the name, it might be the index of this item in the queue.
-            pub order_id: Option<i32>,
+            /// Used to track original order of an item in the queue to undo shuffle.
+            /// [Documentation](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages.QueueItem#orderId)
+            pub order_id: Option<u32>,
 
             pub playback_duration: Option<Seconds>,
             pub preload_time: Option<Seconds>,
@@ -514,10 +547,30 @@ pub mod media {
             pub track_content_id: Option<String>,
 
             pub track_content_type: Option<MimeType>,
-            pub track_id: TrackId,
+
+            /// Must be set before serialising.
+            ///
+            /// See: `Media.with_track`.
+            pub track_id: Option<TrackId>,
 
             #[serde(rename = "type")]
             pub track_type: Option<TrackType>,
+        }
+
+        impl Track {
+            pub fn vtt_subtitles_from_url(url: &str) -> Track {
+                Track {
+                    custom_data: CustomData::default(),
+                    is_inband: None,
+                    language: None,
+                    name: None,
+                    subtype: Some(TextTrackType::Subtitles),
+                    track_content_id: Some(url.to_string()),
+                    track_content_type: Some(MimeType::from(MIME_TEXT_VTT)),
+                    track_id: None,
+                    track_type: Some(TrackType::Text),
+                }
+            }
         }
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -561,6 +614,19 @@ pub mod media {
             #[serde(untagged, skip_serializing)]
             Unknown(String),
         }
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        pub enum MediaCategory {
+            Audio,
+            Video,
+            Image,
+
+            #[serde(untagged, skip_serializing)]
+            Unknown(String),
+        }
+
+
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -694,9 +760,13 @@ pub mod media {
         pub type Color = String;
 
         pub type ItemId = i32;
-        pub type MimeType = String;
         pub type Seconds = f64;
+
         pub type TrackId = i32;
+        pub const TRACK_ID_FIRST: TrackId = 1;
+
+        pub type MimeType = String;
+        pub const MIME_TEXT_VTT: &str = "text/vtt";
     }
     pub use self::shared::*;
 
@@ -796,6 +866,8 @@ pub mod media {
         };
     }
 
+
+
     #[skip_serializing_none]
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -812,7 +884,7 @@ pub mod media {
     #[serde(rename_all = "camelCase")]
     pub struct LoadRequestArgs {
         pub active_track_ids: Option<Vec<TrackId>>,
-        pub autoplay: bool,
+        pub autoplay: Option<bool>,
         pub current_time: Option<Seconds>,
         pub custom_data: CustomData,
         pub media: Media,
@@ -828,20 +900,9 @@ pub mod media {
     impl LoadRequestArgs {
         pub fn from_url(url: &str) -> LoadRequestArgs {
             LoadRequestArgs {
-                media: Media {
-                    content_id: url.to_string(),
-                    content_type: "".to_string(),
-                    content_url: None,
-                    custom_data: CustomData::default(),
-                    duration: None,
-                    metadata: None,
-                    stream_type: None,
-                    text_track_style: None,
-                    tracks: None,
-                },
-
+                media: Media::from_url(url),
                 active_track_ids: None,
-                autoplay: true,
+                autoplay: Some(true),
                 current_time: None,
                 custom_data: CustomData::default(),
                 playback_rate: None,
@@ -979,8 +1040,6 @@ pub mod media {
         ];
     }
 
-
-
     simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
 
     #[derive(Debug, Deserialize)]
@@ -1055,12 +1114,13 @@ pub mod media {
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueLoadRequestArgs {
+        pub current_time: Option<Seconds>,
         pub custom_data: CustomData,
         pub items: Vec<QueueItem>,
-        pub repeat_mode: RepeatMode,
+        pub repeat_mode: Option<RepeatMode>,
 
-        /// Default: 0.
-        pub start_index: u32,
+        /// Treated as 0 if None.
+        pub start_index: Option<u32>,
     }
 
     impl RequestInner for QueueLoadRequest {
@@ -1195,6 +1255,7 @@ pub mod media {
     }
 
 
+
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct SeekRequest {
@@ -1218,6 +1279,34 @@ pub mod media {
 
         #[serde(rename = "PLAYBACK_START")]
         Start,
+    }
+
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SetPlaybackRateRequest {
+        pub media_session_id: MediaSessionId,
+
+        #[serde(flatten)]
+        pub args: SetPlaybackRateRequestArgs,
+    }
+
+    #[skip_serializing_none]
+    #[derive(Debug, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SetPlaybackRateRequestArgs {
+        pub custom_data: CustomData,
+
+        pub playback_rate: Option<f32>,
+
+        /// Only used if `playback_rate` is `None`.
+        pub relative_playback_rate: Option<f32>,
+    }
+
+    impl RequestInner for SetPlaybackRateRequest {
+        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_SET_PLAYBACK_RATE;
     }
 
 

@@ -59,6 +59,7 @@ enum Command {
     Pause,
     Play,
     Seek(SeekArgs),
+    SetPlaybackRate(SetPlaybackRateArgs),
     SetVolume(SetVolumeArgs),
     Status(StatusArgs),
     Stop,
@@ -196,6 +197,15 @@ struct SeekArgs {
 }
 
 #[derive(clap::Args, Clone, Debug)]
+struct SetPlaybackRateArgs {
+    #[arg(long)]
+    playback_rate: Option<f32>,
+
+    #[arg(long)]
+    relative_playback_rate: Option<f32>,
+}
+
+#[derive(clap::Args, Clone, Debug)]
 struct StatusArgs {
     /// Pass flag to stay connected and follow status until stopped.
     #[arg(long, default_value_t = false)]
@@ -302,6 +312,8 @@ async fn main() -> Result<()> {
         Command::Pause => media_pause_main(&mut client).await?,
         Command::Play => media_play_main(&mut client).await?,
         Command::Seek(sub_args) => media_seek_main(&mut client, sub_args).await?,
+        Command::SetPlaybackRate(sub_args) => set_playback_rate_main(
+                                                  &mut client, sub_args).await?,
         Command::SetVolume(sub_args) => set_volume_main(&mut client, sub_args).await?,
         Command::Status(sub_args) => status_main(&mut client, sub_args).await?,
         Command::Stop => media_stop_main(&mut client).await?,
@@ -585,14 +597,15 @@ async fn media_queue_insert_main(client: &mut Client, sub_args: MediaQueueInsert
 
 async fn media_queue_load_main(client: &mut Client, sub_args: MediaQueueLoadArgs) -> Result<()> {
     let args = payload::media::QueueLoadRequestArgs {
+        current_time: None,
         custom_data: CustomData::default(),
         items: sub_args.items.to_items()?,
 
         // TODO: From args
-        repeat_mode: payload::media::RepeatMode::default(),
+        repeat_mode: None,
 
         // TODO: From args
-        start_index: 0,
+        start_index: None,
     };
 
     let app_session = client.media_get_or_launch_default_app_session(RECEIVER_ID.into()).await?;
@@ -669,6 +682,21 @@ async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> 
                                          sub_args.resume_state,
                                          CustomData::default()
                        ).await?;
+    print_media_status(&media_status);
+    Ok(())
+}
+
+// TODO: Test.
+async fn set_playback_rate_main(client: &mut Client, sub_args: SetPlaybackRateArgs) -> Result<()>
+{
+    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let args = payload::media::SetPlaybackRateRequestArgs {
+        custom_data: CustomData::default(),
+        playback_rate: sub_args.playback_rate,
+        relative_playback_rate: sub_args.relative_playback_rate,
+    };
+
+    let media_status = client.media_set_playback_rate(media_session, args).await?;
     print_media_status(&media_status);
     Ok(())
 }

@@ -786,6 +786,31 @@ impl Client {
     }
 
     #[named]
+    pub async fn media_set_playback_rate(&mut self,
+                                         media_session: MediaSession,
+                                         args: payload::media::SetPlaybackRateRequestArgs)
+    -> Result<payload::media::Status>
+    {
+        let payload_req = payload::media::SetPlaybackRateRequest {
+            media_session_id: media_session.media_session_id,
+            args,
+        };
+
+        let resp: Payload<payload::media::GetStatusResponse>
+            = self.json_rpc(payload_req,
+                            media_session.app_destination_id().clone()).await?;
+
+        let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
+            bail!("{method_path}: Error response from seek request\n\
+                   _ response         = {resp:#?}\n\
+                   _ media_session    = {media_session:#?}",
+                  method_path = method_path!("Client"));
+        };
+
+        Ok(status)
+    }
+
+    #[named]
     async fn simple_media_request<Req>(
         &mut self,
         media_session: MediaSession,
