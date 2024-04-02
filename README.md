@@ -117,4 +117,5 @@ For all possible values of `--media-type` see [Supported Media for Google Cast](
 
 ### Miscellaneous
 * [`openscreen` source in Chromium codebase](https://source.chromium.org/chromium/chromium/src/+/main:third_party/openscreen/;bpv=0;bpt=0)
+* [`chrome_cast.js` web sender type reference in old version of the Chromium codebase](https://github.com/chromium/chromium/blob/105.0.5195.148/ui/file_manager/file_manager/externs/chrome_cast.js)
 * [DIAL Protocol](http://www.dial-multiscreen.org/)
