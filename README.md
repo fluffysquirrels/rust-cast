@@ -99,11 +99,22 @@ For all possible values of `--media-type` see [Supported Media for Google Cast](
 
 ## Useful links and sources of inspiration
 
+### Official Google Chromecast docs
+* [Cast overview](https://developers.google.com/cast/docs/overview)
+* [Cast reference root](https://developers.google.com/cast/docs/reference)
+* [Web sender overview](https://developers.google.com/cast/docs/web_sender)
+* [Web sender API reference](https://developers.google.com/cast/docs/reference/web_sender)
+* [Web receiver overview](https://developers.google.com/cast/docs/web_receiver)
+* [Web receiver API reference](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages)
+* [Web receiver API - MessageType](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.MessageType) (the best reference for the possible cast message types and their JSON payloads)
+
+### Open source Chromecast libraries
 * [npm package `castv2`: an implementation of the Chromecast CASTV2 protocol in JS](https://github.com/thibauts/node-castv2);
     * [npm package `castv2-client`: a higher level wrapper for `castv2`](https://github.com/thibauts/node-castv2-client);
-* [Chromecast Web Sender API](https://developers.google.com/cast/docs/reference/web_sender)
 * [Chromecast - steps closer to a python native api](http://www.clift.org/fred/chromecast-steps-closer-to-a-python-native-api.html);
 * [Hackernoon article: The Chromecast Protocol - A Brief Look](https://hackernoon.com/the-chromecast-protocol-a-brief-look) by GNOME GSoc 2022 Intern `@kyteinsky`
     * [Original post](https://kyteinsky.github.io/p/chromecast-protocol/) on `@kyteinsky`'s blog
+
+### Miscellaneous
 * [`openscreen` source in Chromium codebase](https://source.chromium.org/chromium/chromium/src/+/main:third_party/openscreen/;bpv=0;bpt=0)
-* [DIAL Protocol](http://www.dial-multiscreen.org/);
+* [DIAL Protocol](http://www.dial-multiscreen.org/)
