@@ -255,9 +255,13 @@ pub mod media {
 
         impl Media {
             pub fn from_url(url: impl Into<String>) -> Media {
+                Self::from_content_id(url)
+            }
+
+            pub fn from_content_id(content_id: impl Into<String>) -> Media {
                 Media {
-                    content_id: url.into(),
-                    content_type: String::default(),
+                    content_id: content_id.into(),
+                    content_type: MimeType::default(),
                     content_url: None,
                     custom_data: CustomData::default(),
                     duration: None,
@@ -351,10 +355,14 @@ pub mod media {
         pub struct QueueItem {
             pub active_track_ids: Option<Vec<TrackId>>,
 
-            // `autoplay` seems to sometimes be serialised as a JSON string, like `"false"`.
-            // Support deserialising from a bool or string, serialise as a bool.
-//            #[serde_as(as = "serde_with::PickFirst<(_, serde_with::DisplayFromStr)>")]
-//            pub autoplay: bool,
+            // Sometimes in testing this was wrapped by the Chromecast in a JSON string.
+            // TODO: Custom deserialise approach. E.g.:
+            //       1. Function with `serde_as`
+            //       2. struct OptionBoolJson(serde_json::Value),
+            //          implementing TryInto<Option<bool>>
+            // For now, just ignore it on error.
+            #[serde_as(deserialize_as = "serde_with::DefaultOnError")]
+            pub autoplay: Option<bool>,
 
             #[serde(default)]
             pub custom_data: CustomData,
@@ -378,7 +386,7 @@ pub mod media {
             fn default() -> QueueItem {
                 QueueItem {
                     active_track_ids: None,
-                    // autoplay: true,
+                    autoplay: None,
                     custom_data: CustomData::default(),
                     item_id: None,
                     media: None,
@@ -533,7 +541,7 @@ pub mod media {
         }
 
         #[skip_serializing_none]
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Track {
             #[serde(default)]
@@ -560,15 +568,11 @@ pub mod media {
         impl Track {
             pub fn vtt_subtitles_from_url(url: &str) -> Track {
                 Track {
-                    custom_data: CustomData::default(),
-                    is_inband: None,
-                    language: None,
-                    name: None,
                     subtype: Some(TextTrackType::Subtitles),
                     track_content_id: Some(url.to_string()),
                     track_content_type: Some(MimeType::from(MIME_TEXT_VTT)),
-                    track_id: None,
                     track_type: Some(TrackType::Text),
+                    .. Track::default()
                 }
             }
         }
@@ -625,8 +629,6 @@ pub mod media {
             #[serde(untagged, skip_serializing)]
             Unknown(String),
         }
-
-
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -746,6 +748,14 @@ pub mod media {
         impl Default for CustomData {
             fn default() -> CustomData {
                 CustomData::new()
+            }
+        }
+
+        impl<T> From<T> for CustomData
+        where T: Into<serde_json::Value>
+        {
+            fn from(v: T) -> CustomData {
+                CustomData(v.into())
             }
         }
 
@@ -880,7 +890,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct LoadRequestArgs {
         pub active_track_ids: Option<Vec<TrackId>>,
@@ -954,7 +964,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct EditTracksInfoRequestArgs {
         pub active_track_ids: Option<Vec<TrackId>>,
@@ -1015,7 +1025,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueGetItemsRequestArgs {
         pub custom_data: CustomData,
@@ -1082,7 +1092,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueInsertRequestArgs {
         pub custom_data: CustomData,
@@ -1111,7 +1121,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueLoadRequestArgs {
         pub current_time: Option<Seconds>,
@@ -1128,6 +1138,18 @@ pub mod media {
         const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_LOAD;
     }
 
+    impl QueueLoadRequestArgs {
+        pub fn from_items(items: Vec<QueueItem>) -> QueueLoadRequestArgs {
+            QueueLoadRequestArgs {
+                current_time: None,
+                custom_data: CustomData::default(),
+                items,
+                repeat_mode: None,
+                start_index: None,
+            }
+        }
+    }
+
 
 
     #[skip_serializing_none]
@@ -1140,7 +1162,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueRemoveRequestArgs {
         pub custom_data: CustomData,
@@ -1167,7 +1189,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueReorderRequestArgs {
         pub custom_data: CustomData,
@@ -1201,7 +1223,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueUpdateRequestArgs {
         pub current_item_id: Option<ItemId>,
@@ -1293,7 +1315,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct SetPlaybackRateRequestArgs {
         pub custom_data: CustomData,
