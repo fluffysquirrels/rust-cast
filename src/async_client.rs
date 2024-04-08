@@ -19,7 +19,7 @@ use crate::{
 };
 use futures::{
     future::Either,
-    Future, SinkExt, Stream, StreamExt,
+    SinkExt, Stream, StreamExt,
     stream::{SplitSink, SplitStream},
 };
 use once_cell::sync::Lazy;
@@ -33,7 +33,6 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{Arc, atomic::{AtomicUsize, Ordering}},
-    task::{Context, Poll},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -60,7 +59,7 @@ pub struct Client {
 
     shared: Arc<Shared>,
 
-    task_state_rx: watch::Receiver<TaskState>,
+    conn_state_rx: watch::Receiver<ConnectionState>,
 }
 
 #[derive(Clone, Debug)]
@@ -97,7 +96,7 @@ pin_project! {
         need_flush: bool,
         requests_map: HashMap<RequestId, RequestState>,
 
-        task_state_tx: watch::Sender<TaskState>,
+        conn_state_tx: watch::Sender<ConnectionState>,
 
         shared: Arc<Shared>,
     }
@@ -166,11 +165,6 @@ type CommandId = usize;
 
 struct CastMessageCodec;
 
-// TODO: Does Stream impl for this work?
-pub struct StatusListener {
-    status_rx: broadcast::Receiver<StatusUpdate>,
-}
-
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct StatusUpdate {
@@ -181,19 +175,33 @@ pub struct StatusUpdate {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum StatusMessage {
+    /// Connection closed by request.
     ClosedOk,
+
+    /// Connection closed due to an error.
     ClosedErr,
 
-    // TODO: Implement this.
-    HeartbeatPingSent,
-    // TODO: Implement this.
-    HeartbeatPongSent,
+    // TODO: Implement these.
+    // HeartbeatPingSent,
+    // HeartbeatPongSent,
 
     // Box these?
     Media(payload::media::Status),
     Receiver(payload::receiver::Status),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionState {
+    Connected,
+
+    /// Connection closed by request.
+    ClosedOk,
+
+    /// Connection closed due to an error.
+    ClosedErr,
+}
+
+#[cfg(any())] // Disabled for now, may come back to it.
 #[derive(Clone, Debug)]
 pub struct ErrorStatus {
     // TODO: Implement this.
@@ -208,13 +216,6 @@ pub struct ReceiverStatuses {
     pub receiver_id: EndpointId,
     pub receiver_status: payload::receiver::Status,
     pub media_statuses: Vec<(MediaSession, payload::media::StatusEntry)>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TaskState {
-    Connected,
-    DoneOk,
-    DoneErr,
 }
 
 /// Duration for the Task to do something locally. (Probably a bit high).
@@ -263,21 +264,21 @@ impl Config {
         let conn = tls_connect(&self).await?;
 
         let (task_cmd_tx, task_cmd_rx) = mpsc::channel(TASK_CMD_CHANNEL_CAPACITY);
-        let (task_state_tx, task_state_rx) = watch::channel(TaskState::Connected);
+        let (conn_state_tx, conn_state_rx) = watch::channel(ConnectionState::Connected);
 
         let shared = Arc::new(Shared {
             config: self,
             status_tx: broadcast::Sender::new(STATUS_BROADCAST_CHANNEL_CAPACITY),
         });
 
-        let task = Task::new(conn, task_cmd_rx, task_state_tx, Arc::clone(&shared));
+        let task = Task::new(conn, task_cmd_rx, conn_state_tx, Arc::clone(&shared));
 
         let task_join_handle = Some(tokio::spawn(task.main()));
 
         let mut client = Client {
             task_join_handle,
             task_cmd_tx,
-            task_state_rx,
+            conn_state_rx,
 
             request_id_gen: RequestIdGen::new(),
             next_command_id: AtomicUsize::new(1),
@@ -850,25 +851,14 @@ impl Client {
         Ok(status)
     }
 
-    // TODO: Broken, use listen_status_2.
-    pub fn listen_status(&self) -> StatusListener {
-        todo!("TODO: Fix the Stream impl for StatusListener.");
-
-        // TODO: Set up auto connect for the media app?
-
-        StatusListener {
-            status_rx: self.shared.status_tx.subscribe(),
-        }
-    }
-
-    pub fn listen_status_2(&self) -> impl Stream<Item = StatusUpdate> + Send {
+    #[named]
+    pub fn listen_status(&self) -> impl Stream<Item = StatusUpdate> + Send {
         // TODO: Set up auto connect for the media app?
         tokio_stream::wrappers::BroadcastStream::new(self.shared.status_tx.subscribe())
             .filter_map(|res| futures::future::ready(match res {
                 Ok(it) => Some(it),
                 Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                    tracing::warn!(target: concat!(module_path!(),
-                                                   "::Client::listen_status_2"),
+                    tracing::warn!(target: method_path!("Client"),
                                    n,
                                    "lagged");
                     None
@@ -876,21 +866,25 @@ impl Client {
             }))
     }
 
-    fn task_state(&mut self) -> TaskState {
-        self.task_state_rx.borrow_and_update().clone()
+    pub fn listen_connection_state(&self) -> impl Stream<Item = ConnectionState> + Send {
+        tokio_stream::wrappers::WatchStream::new(self.conn_state_rx.clone())
+    }
+
+    pub fn connection_state(&mut self) -> ConnectionState {
+        self.conn_state_rx.borrow_and_update().clone()
     }
 
     /// Close in an orderly way. The returned Future must be polled to completion.
     #[named]
     pub async fn close(mut self) -> Result<()> {
-        let task_state = self.task_state();
+        let connection_state = self.connection_state();
         tracing::trace!(target: method_path!("Client"),
-                        ?task_state,
-                        "task_state");
+                        ?connection_state,
+                        "connection_state");
 
         // Ensure task has stopped.
-        match task_state {
-            TaskState::Connected => {
+        match connection_state {
+            ConnectionState::Connected => {
                 let _: Box<()> = self.task_cmd::<()>(TaskCmdType::Shutdown).await?;
             },
 
@@ -898,8 +892,8 @@ impl Client {
             //
             // Don't send a shutdown command: it's not required, and sending the command
             // would fail because the receiving end has probably closed.
-            TaskState::DoneOk
-            | TaskState::DoneErr => (),
+            ConnectionState::ClosedOk
+            | ConnectionState::ClosedErr => (),
         };
 
         // Should be no need to handle when task_join_handle is None.
@@ -1188,7 +1182,7 @@ impl<S: TokioAsyncStream> Task<S> {
     pub fn new(
         conn: S,
         task_cmd_rx: mpsc::Receiver::<TaskCmd>,
-        task_state_tx: watch::Sender::<TaskState>,
+        conn_state_tx: watch::Sender::<ConnectionState>,
         shared: Arc<Shared>,
     ) -> Task<S> {
         let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx);
@@ -1210,7 +1204,7 @@ impl<S: TokioAsyncStream> Task<S> {
             need_flush: false,
             requests_map: HashMap::new(),
 
-            task_state_tx,
+            conn_state_tx,
 
             shared,
         }
@@ -1245,7 +1239,7 @@ impl<S: TokioAsyncStream> Task<S> {
                         tracing::info!(target: METHOD_PATH,
                                        "shutdown on command");
                         Self::respond_generic(cmd.result_sender, Ok(()));
-                        this.publish_closed(TaskState::DoneOk);
+                        this.publish_closed(ConnectionState::ClosedOk);
                         return Ok(());
                     },
                 },
@@ -1269,7 +1263,7 @@ impl<S: TokioAsyncStream> Task<S> {
                                        ?err,
                                        "flush error");
 
-                        this.publish_closed(TaskState::DoneErr);
+                        this.publish_closed(ConnectionState::ClosedErr);
                         return Ok(());
                     }
                     this.need_flush = false;
@@ -1279,7 +1273,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
         tracing::info!(target: METHOD_PATH,
                        "shutdown on event stream closed");
-        this.publish_closed(TaskState::DoneOk);
+        this.publish_closed(ConnectionState::ClosedOk);
 
         // TODO: cleanup? e.g.
         //   * flush outputs
@@ -1815,15 +1809,15 @@ impl<S: TokioAsyncStream> Task<S> {
         }
     }
 
-    fn publish_closed(self: Pin<&mut Self>, state: TaskState) {
+    fn publish_closed(self: Pin<&mut Self>, state: ConnectionState) {
         let msg: StatusMessage = match state {
-            TaskState::Connected => panic!("Task::publish_closed: bad state '{state:?}'"),
+            ConnectionState::Connected => panic!("Task::publish_closed: bad state '{state:?}'"),
 
-            TaskState::DoneOk => StatusMessage::ClosedOk,
-            TaskState::DoneErr => StatusMessage::ClosedErr,
+            ConnectionState::ClosedOk => StatusMessage::ClosedOk,
+            ConnectionState::ClosedErr => StatusMessage::ClosedErr,
         };
 
-        let _prev = self.task_state_tx.send_replace(state);
+        let _prev = self.conn_state_tx.send_replace(state);
 
         self.publish_status_update(msg.now());
 
@@ -1989,40 +1983,6 @@ impl StatusMessage {
         StatusUpdate {
             time: Utc::now(),
             msg: self,
-        }
-    }
-}
-
-impl StatusListener {
-    pub async fn recv(&mut self) -> Result<StatusUpdate, broadcast::error::RecvError> {
-        self.status_rx.recv().await
-    }
-
-    pub fn try_recv(&mut self) -> Result<StatusUpdate, broadcast::error::TryRecvError> {
-        self.status_rx.try_recv()
-    }
-}
-
-// TODO: Is this broken like in downloader?
-impl Stream for StatusListener {
-    type Item = StatusUpdate;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>
-    ) -> Poll<Option<Self::Item>>
-    {
-        use broadcast::error::RecvError;
-
-        pin! { let recv = self.status_rx.recv(); }
-
-        loop {
-            let res: Result<Self::Item, RecvError> = futures::ready!(recv.as_mut().poll(cx));
-            match res {
-                Ok(it) => return Poll::Ready(Some(it)),
-                Err(RecvError::Closed) => return Poll::Ready(None),
-                Err(RecvError::Lagged(_)) => continue,
-            };
         }
     }
 }
