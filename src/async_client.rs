@@ -38,7 +38,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     pin,
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, watch},
 };
 use tokio_util::{
     codec::{self, Framed},
@@ -59,6 +59,8 @@ pub struct Client {
     next_command_id: AtomicUsize,
 
     shared: Arc<Shared>,
+
+    task_state_rx: watch::Receiver<TaskState>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +97,8 @@ pin_project! {
         need_flush: bool,
         requests_map: HashMap<RequestId, RequestState>,
 
+        task_state_tx: watch::Sender<TaskState>,
+
         shared: Arc<Shared>,
     }
 }
@@ -103,7 +107,7 @@ pin_project! {
 struct RequestState {
     response_ns: NamespaceConst,
     response_type_names: &'static [MessageTypeConst],
-    delay_key: DelayKey,
+    timeout_key: DelayKey,
 
     #[allow(dead_code)] // Just for debugging for now.
     deadline: tokio::time::Instant,
@@ -177,17 +181,15 @@ pub struct StatusUpdate {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum StatusMessage {
-    // TODO: Implement this. Or merge with `Self::Error` variant?
-    Disconnect,
-
-    // TODO: Implement this.
-    Error(ErrorStatus),
+    ClosedOk,
+    ClosedErr,
 
     // TODO: Implement this.
     HeartbeatPingSent,
     // TODO: Implement this.
     HeartbeatPongSent,
 
+    // Box these?
     Media(payload::media::Status),
     Receiver(payload::receiver::Status),
 }
@@ -206,6 +208,13 @@ pub struct ReceiverStatuses {
     pub receiver_id: EndpointId,
     pub receiver_status: payload::receiver::Status,
     pub media_statuses: Vec<(MediaSession, payload::media::StatusEntry)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskState {
+    Connected,
+    DoneOk,
+    DoneErr,
 }
 
 /// Duration for the Task to do something locally. (Probably a bit high).
@@ -254,19 +263,21 @@ impl Config {
         let conn = tls_connect(&self).await?;
 
         let (task_cmd_tx, task_cmd_rx) = mpsc::channel(TASK_CMD_CHANNEL_CAPACITY);
+        let (task_state_tx, task_state_rx) = watch::channel(TaskState::Connected);
 
         let shared = Arc::new(Shared {
             config: self,
             status_tx: broadcast::Sender::new(STATUS_BROADCAST_CHANNEL_CAPACITY),
         });
 
-        let task = Task::new(conn, task_cmd_rx, Arc::clone(&shared));
+        let task = Task::new(conn, task_cmd_rx, task_state_tx, Arc::clone(&shared));
 
         let task_join_handle = Some(tokio::spawn(task.main()));
 
         let mut client = Client {
             task_join_handle,
             task_cmd_tx,
+            task_state_rx,
 
             request_id_gen: RequestIdGen::new(),
             next_command_id: AtomicUsize::new(1),
@@ -865,10 +876,34 @@ impl Client {
             }))
     }
 
-    /// Close in an orderly way. The returned Future must be polled to completion.
-    pub async fn close(mut self) -> Result<()> {
-        let _: Box<()> = self.task_cmd::<()>(TaskCmdType::Shutdown).await?;
+    fn task_state(&mut self) -> TaskState {
+        self.task_state_rx.borrow_and_update().clone()
+    }
 
+    /// Close in an orderly way. The returned Future must be polled to completion.
+    #[named]
+    pub async fn close(mut self) -> Result<()> {
+        let task_state = self.task_state();
+        tracing::trace!(target: method_path!("Client"),
+                        ?task_state,
+                        "task_state");
+
+        // Ensure task has stopped.
+        match task_state {
+            TaskState::Connected => {
+                let _: Box<()> = self.task_cmd::<()>(TaskCmdType::Shutdown).await?;
+            },
+
+            // Task should already have stopped itself.
+            //
+            // Don't send a shutdown command: it's not required, and sending the command
+            // would fail because the receiving end has probably closed.
+            TaskState::DoneOk
+            | TaskState::DoneErr => (),
+        };
+
+        // Should be no need to handle when task_join_handle is None.
+        // If so, `close()` has already been called and Client should have been consumed.
         let join_fut = self.task_join_handle.take()
                            .expect("task_join_handle is Some(_) until .close().");
 
@@ -1153,6 +1188,7 @@ impl<S: TokioAsyncStream> Task<S> {
     pub fn new(
         conn: S,
         task_cmd_rx: mpsc::Receiver::<TaskCmd>,
+        task_state_tx: watch::Sender::<TaskState>,
         shared: Arc<Shared>,
     ) -> Task<S> {
         let task_cmd_rx = tokio_stream::wrappers::ReceiverStream::new(task_cmd_rx);
@@ -1171,9 +1207,10 @@ impl<S: TokioAsyncStream> Task<S> {
 
             task_cmd_rx,
             timeout_queue,
-
             need_flush: false,
             requests_map: HashMap::new(),
+
+            task_state_tx,
 
             shared,
         }
@@ -1208,6 +1245,7 @@ impl<S: TokioAsyncStream> Task<S> {
                         tracing::info!(target: METHOD_PATH,
                                        "shutdown on command");
                         Self::respond_generic(cmd.result_sender, Ok(()));
+                        this.publish_closed(TaskState::DoneOk);
                         return Ok(());
                     },
                 },
@@ -1222,11 +1260,17 @@ impl<S: TokioAsyncStream> Task<S> {
 
                 TaskEvent::Flush(res) => {
                     if let Err(err) = res {
-                        // TODO: Mark connection as dead?
-                        // TODO: Add optional auto reconnect.
+                        // Error sending a message. Shut down the connection and return.
+
+                        // TODO: Just warn on errors that leave us possibly connected?
+                        // TODO: Possibly add optional auto reconnect?
+
                         tracing::warn!(target: METHOD_PATH,
                                        ?err,
                                        "flush error");
+
+                        this.publish_closed(TaskState::DoneErr);
+                        return Ok(());
                     }
                     this.need_flush = false;
                 }
@@ -1235,10 +1279,11 @@ impl<S: TokioAsyncStream> Task<S> {
 
         tracing::info!(target: METHOD_PATH,
                        "shutdown on event stream closed");
+        this.publish_closed(TaskState::DoneOk);
 
         // TODO: cleanup? e.g.
         //   * flush outputs
-        //   * reset connections,
+        //   * reset connections (they will be dropped, do we need this?)
         //   * return errors to response channels
         //     (once response channel senders are dropped this will happen anyway)
 
@@ -1358,12 +1403,12 @@ impl<S: TokioAsyncStream> Task<S> {
         }
 
         // # Record request state and set timeout.
-        let delay_key = self.as_mut().project()
-                            .timeout_queue.insert_at(request_id, deadline);
+        let timeout_key = self.as_mut().project()
+                              .timeout_queue.insert_at(request_id, deadline);
 
         let state = RequestState {
             deadline,
-            delay_key,
+            timeout_key,
 
             response_ns,
             response_type_names,
@@ -1560,7 +1605,7 @@ impl<S: TokioAsyncStream> Task<S> {
             return;
         };
 
-        if proj.timeout_queue.as_mut().try_remove(&request_state.delay_key).is_none() {
+        if proj.timeout_queue.as_mut().try_remove(&request_state.timeout_key).is_none() {
             tracing::warn!(target: METHOD_PATH,
                            ?request_state,
                            ?msg, ?pd, pd_type,
@@ -1599,7 +1644,7 @@ impl<S: TokioAsyncStream> Task<S> {
         const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = expired.deadline();
-        let delay_key = expired.key();
+        let timeout_key = expired.key();
         let request_id = expired.get_ref();
 
         let proj = self.as_mut().project();
@@ -1609,7 +1654,7 @@ impl<S: TokioAsyncStream> Task<S> {
                     request_id: {request_id}");
         };
 
-        assert_eq!(delay_key, request_state.delay_key);
+        assert_eq!(timeout_key, request_state.timeout_key);
 
         tracing::warn!(target: METHOD_PATH,
                        ?expired,
@@ -1673,6 +1718,17 @@ impl<S: TokioAsyncStream> Task<S> {
         Self::respond_generic(result_sender, result);
     }
 
+    /// Used to respond with an error when the Ok result type is not known.
+    ///
+    /// `task_cmd` only downcasts after it checks for an Err, so this should not
+    /// fail at runtime.
+    fn respond_err(result_sender: TaskCmdResultSender,
+                   err: Error)
+    {
+        Self::respond_generic::<()>(result_sender, Err(err))
+    }
+
+    // TODO: Move to a TaskCmdResultSender method.
     fn respond_generic<R>(result_sender: TaskCmdResultSender,
                           result: Result<R>)
     where R: Any + Debug + Send + Sync
@@ -1756,6 +1812,25 @@ impl<S: TokioAsyncStream> Task<S> {
         if let Err(_err) = self.shared.status_tx.send(update) {
             tracing::trace!(target: METHOD_PATH,
                             "status send err: no receivers listening");
+        }
+    }
+
+    fn publish_closed(self: Pin<&mut Self>, state: TaskState) {
+        let msg: StatusMessage = match state {
+            TaskState::Connected => panic!("Task::publish_closed: bad state '{state:?}'"),
+
+            TaskState::DoneOk => StatusMessage::ClosedOk,
+            TaskState::DoneErr => StatusMessage::ClosedErr,
+        };
+
+        let _prev = self.task_state_tx.send_replace(state);
+
+        self.publish_status_update(msg.now());
+
+        // Return errors to all outstanding response channels.
+        for (_req_id, req_state) in self.project().requests_map.drain() {
+            Self::respond_err(req_state.result_sender,
+                              format_err!("Task stopping, state: {state:?}"));
         }
     }
 
@@ -1906,6 +1981,15 @@ impl Config {
         self.sender.as_ref()
             .cloned()
             .unwrap_or_else(|| DEFAULT_SENDER_ID.to_string())
+    }
+}
+
+impl StatusMessage {
+    fn now(self) -> StatusUpdate {
+        StatusUpdate {
+            time: Utc::now(),
+            msg: self,
+        }
     }
 }
 
