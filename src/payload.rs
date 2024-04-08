@@ -362,6 +362,7 @@ pub mod media {
             //          implementing TryInto<Option<bool>>
             // For now, just ignore it on error.
             #[serde_as(deserialize_as = "serde_with::DefaultOnError")]
+            #[serde(default)]
             pub autoplay: Option<bool>,
 
             #[serde(default)]
@@ -540,39 +541,64 @@ pub mod media {
             }
         }
 
-        #[skip_serializing_none]
-        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
+        // Deliberately serialize Option::None values.
+        // This forces the serialization of `track_id` when it is None,
+        // which returns a validation error.
         pub struct Track {
             #[serde(default)]
             pub custom_data: CustomData,
+
             pub is_inband: Option<bool>,
             pub language: Option<String>,
             pub name: Option<String>,
             pub subtype: Option<TextTrackType>,
 
             /// Typically a URL for the track.
+            ///
+            /// Note: The value is wrapped in `Option` because the payload specification supports
+            /// this for in-band tracks stored within the main media file.
             pub track_content_id: Option<String>,
 
             pub track_content_type: Option<MimeType>,
 
             /// Must be set before serialising.
             ///
+            /// The value is wrapped in `Option` to make it easier for consumers
+            /// to build a request without explicitly setting a `track_id` themselves.
+            ///
             /// See: `Media.with_track`.
+            #[serde(serialize_with = "serialize_track_id")]
             pub track_id: Option<TrackId>,
 
             #[serde(rename = "type")]
-            pub track_type: Option<TrackType>,
+            pub track_type: TrackType,
+        }
+
+        fn serialize_track_id<S: serde::Serializer>(track_id: &Option<TrackId>, serializer: S)
+        -> Result<S::Ok, S::Error>
+        {
+            let Some(track_id) = track_id.as_ref() else {
+                return Err(serde::ser::Error::custom(
+                    "Track::track_id must be set before serialization."));
+            };
+
+            serializer.serialize_i32(*track_id)
         }
 
         impl Track {
             pub fn vtt_subtitles_from_url(url: &str) -> Track {
                 Track {
+                    custom_data: CustomData::default(),
+                    is_inband: None,
+                    language: None,
+                    name: None,
                     subtype: Some(TextTrackType::Subtitles),
                     track_content_id: Some(url.to_string()),
                     track_content_type: Some(MimeType::from(MIME_TEXT_VTT)),
-                    track_type: Some(TrackType::Text),
-                    .. Track::default()
+                    track_id: None,
+                    track_type: TrackType::Text,
                 }
             }
         }
@@ -737,7 +763,9 @@ pub mod media {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct MediaRequestCommon {
+            #[serde(default)]
             pub custom_data: CustomData,
+
             pub media_session_id: MediaSessionId,
         }
 
@@ -896,7 +924,10 @@ pub mod media {
         pub active_track_ids: Option<Vec<TrackId>>,
         pub autoplay: Option<bool>,
         pub current_time: Option<Seconds>,
+
+        #[serde(default)]
         pub custom_data: CustomData,
+
         pub media: Media,
         pub playback_rate: Option<f64>,
         pub queue_data: Option<QueueData>,
@@ -1028,7 +1059,9 @@ pub mod media {
     #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueGetItemsRequestArgs {
+        #[serde(default)]
         pub custom_data: CustomData,
+
         pub item_ids: Vec<ItemId>,
     }
 
@@ -1095,6 +1128,7 @@ pub mod media {
     #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueInsertRequestArgs {
+        #[serde(default)]
         pub custom_data: CustomData,
 
         /// When None, insert the items to the end of the queue.
@@ -1125,7 +1159,10 @@ pub mod media {
     #[serde(rename_all = "camelCase")]
     pub struct QueueLoadRequestArgs {
         pub current_time: Option<Seconds>,
+
+        #[serde(default)]
         pub custom_data: CustomData,
+
         pub items: Vec<QueueItem>,
         pub repeat_mode: Option<RepeatMode>,
 
@@ -1165,6 +1202,7 @@ pub mod media {
     #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueRemoveRequestArgs {
+        #[serde(default)]
         pub custom_data: CustomData,
 
         pub current_item_id: Option<ItemId>,
@@ -1192,6 +1230,7 @@ pub mod media {
     #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueReorderRequestArgs {
+        #[serde(default)]
         pub custom_data: CustomData,
 
         pub current_item_id: Option<ItemId>,
@@ -1228,7 +1267,10 @@ pub mod media {
     pub struct QueueUpdateRequestArgs {
         pub current_item_id: Option<ItemId>,
         pub current_time: Option<Seconds>,
+
+        #[serde(default)]
         pub custom_data: CustomData,
+
         pub items: Option<Vec<QueueItem>>,
 
         /// Play the item forward or back by this offset in the queue items list.
@@ -1282,6 +1324,8 @@ pub mod media {
     #[serde(rename_all = "camelCase")]
     pub struct SeekRequest {
         pub media_session_id: MediaSessionId,
+
+        #[serde(default)]
         pub custom_data: CustomData,
 
         pub current_time: Option<Seconds>,
@@ -1318,6 +1362,7 @@ pub mod media {
     #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct SetPlaybackRateRequestArgs {
+        #[serde(default)]
         pub custom_data: CustomData,
 
         pub playback_rate: Option<f32>,
