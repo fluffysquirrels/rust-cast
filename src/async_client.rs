@@ -1657,6 +1657,16 @@ impl<S: TokioAsyncStream> Task<S> {
             return;
         }
 
+        // Heartbeat pong reply from remote; no further action.
+        if msg_ns == payload::heartbeat::CHANNEL_NAMESPACE
+            && pd.typ == payload::heartbeat::MESSAGE_TYPE_PONG
+        {
+            tracing::debug!(target: METHOD_PATH,
+                            ?msg,
+                            "Heartbeat pong response from remote.");
+            return;
+        }
+
         // Receiver status from remote; try to publish update to listeners.
         if msg_ns == payload::receiver::CHANNEL_NAMESPACE
             && pd.typ == payload::receiver::MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS
