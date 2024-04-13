@@ -93,7 +93,10 @@ pin_project! {
         #[pin]
         timeout_queue: DelayQueue<RequestId>,
 
-        need_flush: bool,
+        flush: Option<FlushState>,
+
+        closed: bool,
+
         requests_map: HashMap<RequestId, RequestState>,
 
         conn_state_tx: watch::Sender<ConnectionState>,
@@ -112,6 +115,11 @@ struct RequestState {
     deadline: tokio::time::Instant,
 
     result_sender: TaskCmdResultSender,
+}
+
+#[derive(Debug)]
+struct FlushState {
+    deadline: tokio::time::Instant,
 }
 
 #[derive(Debug)]
@@ -1173,7 +1181,7 @@ async fn tls_connect(config: &Config)
 #[derive(Debug)]
 enum TaskEvent {
     Cmd(TaskCmd),
-    Flush(Result<()>),
+    Flush(Result<Result<()>, tokio::time::error::Elapsed>),
     MessageRead(Result<CastMessage>),
     RpcTimeout(DelayExpired<RequestId>),
 }
@@ -1201,7 +1209,8 @@ impl<S: TokioAsyncStream> Task<S> {
 
             task_cmd_rx,
             timeout_queue,
-            need_flush: false,
+            flush: None,
+            closed: false,
             requests_map: HashMap::new(),
 
             conn_state_tx,
@@ -1253,20 +1262,22 @@ impl<S: TokioAsyncStream> Task<S> {
                 }
 
                 TaskEvent::Flush(res) => {
-                    if let Err(err) = res {
-                        // Error sending a message. Shut down the connection and return.
+                    match res {
+                        Ok(Ok(())) => { this.flush = None; },
+                        err => {
+                            // Error sending a message. Shut down the connection and return.
 
-                        // TODO: Just warn on errors that leave us possibly connected?
-                        // TODO: Possibly add optional auto reconnect?
+                            // TODO: Just warn on errors that leave us possibly connected?
+                            // TODO: Possibly add optional auto reconnect?
 
-                        tracing::warn!(target: METHOD_PATH,
-                                       ?err,
-                                       "flush error");
+                            tracing::warn!(target: METHOD_PATH,
+                                           ?err,
+                                           "flush error");
 
-                        this.publish_closed(ConnectionState::ClosedErr);
-                        return Ok(());
+                            this.publish_closed(ConnectionState::ClosedErr);
+                            return Ok(());
+                        }
                     }
-                    this.need_flush = false;
                 }
             }
         }
@@ -1284,16 +1295,33 @@ impl<S: TokioAsyncStream> Task<S> {
         Ok(())
     }
 
+    #[named]
     async fn take_next_event(self: Pin<&mut Self>) -> Option<TaskEvent> {
         let mut proj = self.project();
 
-        let conn_flush_stream = if *proj.need_flush {
-            let fut = proj.conn_framed_sink.flush();
-            let stream = futures::stream::once(fut);
-            Either::Left(stream)
-        } else {
-            Either::Right(futures::stream::empty())
-        };
+        if *proj.closed {
+            tracing::info!(target: method_path!("Task"),
+                           closed = true,
+                           "closed = true from previous loop");
+            return None;
+        }
+
+        let conn_flush_stream /* : impl Stream<Item = Result<Result<()>, Elapsed>>*/
+            = if let Some(flush) = proj.flush {
+                // Looking at the source code, the returned `Flush` future holds no state,
+                // it just calls Sink::poll_flush().
+                // So if the flush doesn't complete in this method call, Future is dropped,
+                // but no data should be lost.
+                let fut = proj.conn_framed_sink.flush();
+
+                let with_timeout = tokio::time::timeout_at(flush.deadline, fut);
+                let stream = futures::stream::once(with_timeout);
+                Either::Left(stream)
+            } else {
+                Either::Right(futures::stream::empty())
+            };
+
+        pin!(conn_flush_stream);
 
         // Streams polled in order with current implementation on first
         // poll of Merge.
@@ -1441,7 +1469,9 @@ impl<S: TokioAsyncStream> Task<S> {
     ) -> Result<()> {
         let mut proj = self.project();
 
-        *proj.need_flush = true;
+        *proj.flush = Some(FlushState {
+            deadline,
+        });
 
         // TODO: Don't block the main task when conn sink buffer is full.
         //       Probably just return a backpressure error immediately,
@@ -1462,6 +1492,7 @@ impl<S: TokioAsyncStream> Task<S> {
                 tracing::warn!(target: METHOD_PATH,
                                ?err,
                                "Message read error");
+                self.publish_closed(ConnectionState::ClosedErr);
                 return;
             },
             Ok(msg) => msg,
@@ -1616,6 +1647,9 @@ impl<S: TokioAsyncStream> Task<S> {
                      _ pd_type       = {pd_type:?}\n\
                      _ request_state = {request_state:#?}",
                     expected_ns = request_state.response_ns))
+
+                // TODO: Is this still useful? Why did I disable this?
+                //       This will fail to deserialise in `Client` I think?
             } else if false && !request_state.response_type_names.contains(&pd.typ.as_str()) {
                 Err(format_err!(
                     "{METHOD_PATH}: received reply message with unexpected type:\n\
@@ -1809,13 +1843,15 @@ impl<S: TokioAsyncStream> Task<S> {
         }
     }
 
-    fn publish_closed(self: Pin<&mut Self>, state: ConnectionState) {
+    fn publish_closed(mut self: Pin<&mut Self>, state: ConnectionState) {
         let msg: StatusMessage = match state {
             ConnectionState::Connected => panic!("Task::publish_closed: bad state '{state:?}'"),
 
             ConnectionState::ClosedOk => StatusMessage::ClosedOk,
             ConnectionState::ClosedErr => StatusMessage::ClosedErr,
         };
+
+        *self.as_mut().project().closed = true;
 
         let _prev = self.conn_state_tx.send_replace(state);
 
