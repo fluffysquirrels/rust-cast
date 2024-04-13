@@ -284,10 +284,7 @@ async fn main() -> Result<()> {
 
     let addr = args.target.resolve_to_socket_addr().await?;
 
-    let config = client::Config {
-        addr,
-        sender: None, // Use default
-    };
+    let config = client::Config::from_addr(addr);
     let mut client = config.connect().await?;
 
     match args.command {
@@ -334,7 +331,7 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
             UserExit,
         }
 
-        let listener = client.listen_status_2();
+        let listener = client.listen_status();
 
         pin! {
             let cancel_stream = futures::stream::once(pause());
