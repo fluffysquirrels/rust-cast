@@ -801,16 +801,12 @@ impl Client {
     #[named]
     pub async fn media_seek(&mut self,
                             media_session: MediaSession,
-                            current_time: Option<f64>,
-                            resume_state: Option<payload::media::ResumeState>,
-                            custom_data: CustomData)
+                            seek_args: payload::media::SeekRequestArgs)
     -> Result<payload::media::Status>
     {
         let payload_req = payload::media::SeekRequest {
             media_session_id: media_session.media_session_id,
-            current_time,
-            resume_state,
-            custom_data,
+            args: seek_args,
         };
 
         let resp: Payload<payload::media::GetStatusResponse>

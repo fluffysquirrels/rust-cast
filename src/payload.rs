@@ -378,8 +378,13 @@ pub mod media {
             /// [Documentation](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages.QueueItem#orderId)
             pub order_id: Option<u32>,
 
+            /// Playback duration of the item in seconds
+            ///
+            /// This can be less than the duration of the item to only play a part of it.
             pub playback_duration: Option<Seconds>,
             pub preload_time: Option<Seconds>,
+
+            /// Seconds from the beginning of the media to start playback.
             pub start_time: Option<Seconds>,
         }
 
@@ -1083,6 +1088,8 @@ pub mod media {
         ];
     }
 
+
+
     simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
 
     #[derive(Debug, Deserialize)]
@@ -1134,11 +1141,31 @@ pub mod media {
         /// When None, insert the items to the end of the queue.
         pub insert_before: Option<ItemId>,
         pub items: Vec<QueueItem>,
+
+        // TODO: These are in the web receiver documentation, but not yet tested.
+        //
+        // They support jumping to a queue item as one operation while inserting to the queue.
+        //
+        // Ref: https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages.QueueInsertRequestData
+
+        // pub current_item_id: Option<ItemId>,
+        // pub current_item_index: Option<u32>,
+        // pub current_time: Option<Seconds>,
     }
 
     impl RequestInner for QueueInsertRequest {
         const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
         const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_INSERT;
+    }
+
+    impl QueueInsertRequestArgs {
+        pub fn from_items(items: Vec<QueueItem>) -> QueueInsertRequestArgs {
+            QueueInsertRequestArgs {
+                custom_data: CustomData::default(),
+                insert_before: None,
+                items,
+            }
+        }
     }
 
 
@@ -1325,6 +1352,13 @@ pub mod media {
     pub struct SeekRequest {
         pub media_session_id: MediaSessionId,
 
+        #[serde(flatten)]
+        pub args: SeekRequestArgs,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SeekRequestArgs {
         #[serde(default)]
         pub custom_data: CustomData,
 
@@ -1337,7 +1371,7 @@ pub mod media {
         const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_SEEK;
     }
 
-    #[derive(Clone, Copy, Debug, Serialize)]
+    #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
     #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
     pub enum ResumeState {
         #[serde(rename = "PLAYBACK_PAUSE")]

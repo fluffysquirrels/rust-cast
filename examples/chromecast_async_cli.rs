@@ -674,10 +674,13 @@ async fn media_stop_main(client: &mut Client) -> Result<()> {
 
 async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> {
     let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let seek_args = payload::media::SeekRequestArgs {
+        custom_data: CustomData::default(),
+        current_time: sub_args.time,
+        resume_state: sub_args.resume_state,
+    };
     let media_status = client.media_seek(media_session,
-                                         sub_args.time,
-                                         sub_args.resume_state,
-                                         CustomData::default()
+                                         seek_args
                        ).await?;
     print_media_status(&media_status);
     Ok(())
