@@ -356,7 +356,10 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
                     status_single(client).await?;
                 },
                 Event::Update(update) => {
-                    // println!(" # listener status update = {update:#?}\n\n");
+                    if tracing::event_enabled!(tracing::Level::TRACE) {
+                        println!("listener status update (small) = {update:#?}");
+                    }
+
                     println!(" # listener status update (small) = {update_small:#?}\n\
                               ====\n\n",
                              update_small = client::small_debug::StatusUpdate(&update));

@@ -1,3 +1,18 @@
+/// Payloads used in Chromecast protocol messages.
+///
+/// For many `enum`s in this module, there will be fieldless variants matching
+/// what's in the Chromecast documentation, and then an `Unknown(T)` variant
+/// to deserialize any unknown variants returned by the Chromecast, where `T`
+/// is the wire representation (mostly `String` and a few integers).
+///
+/// Ideally, the `Unknown` variant would be marked with `#[serde(skip_serializing)]`,
+/// so serializing this variant would return an error, preventing consumers of this library
+/// from serializing messages to the Chromecast with unknown variants the Chromecast probably
+/// won't support. However another use case for serializing these `enum`s is to faithfully
+/// pass on whatever the Chromecast returned to this library, for example serializing the
+/// value to return as JSON in a web API. To support that use case, `#[serde(skip_serializing)]`
+/// is not applied to the `Unknown` variants at this time.
+
 use anyhow::{bail, format_err};
 use crate::{
     async_client::Result,
@@ -306,7 +321,7 @@ pub mod media {
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Metadata {
-            pub metadata_type: u32,
+            pub metadata_type: MetadataType,
 
             pub album_artist: Option<String>,
             pub album_name: Option<String>,
@@ -620,7 +635,7 @@ pub mod media {
             Cursive,
             SmallCapitals,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             #[clap(skip)]
             Unknown(String),
         }
@@ -634,7 +649,7 @@ pub mod media {
             BoldItalic,
             Italic,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             #[clap(skip)]
             Unknown(String),
         }
@@ -645,8 +660,9 @@ pub mod media {
             Cancelled,
             Interrupted,
             Finished,
+            Error,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             Unknown(String),
         }
 
@@ -657,8 +673,59 @@ pub mod media {
             Video,
             Image,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             Unknown(String),
+        }
+
+        #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+        #[repr(u8)] // Discriminant stored as u8.
+        #[serde(from = "i32", into = "i32")]
+        pub enum MetadataType {
+            Generic = 0,
+            Movie = 1,
+            TvShow = 2,
+            MusicTrack = 3,
+            Photo = 4,
+
+            // TODO: Add variant AudiobookChapter = 5?,
+            // This is documented, but the integer discriminant is not yet known and tested.
+            // Ref: https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.MetadataType
+
+            Unknown(i32),
+        }
+
+        impl From<i32> for MetadataType {
+            fn from(d: i32) -> MetadataType {
+                match d {
+                    0 => MetadataType::Generic,
+                    1 => MetadataType::Movie,
+                    2 => MetadataType::TvShow,
+                    3 => MetadataType::MusicTrack,
+                    4 => MetadataType::Photo,
+
+                    // TODO: Add variant AudiobookChapter = 5?
+                    // 5? => MetadataType::AudiobookChapter,
+
+                    d => MetadataType::Unknown(d),
+                }
+            }
+        }
+
+        impl Into<i32> for MetadataType {
+            fn into(self) -> i32 {
+                match self {
+                    MetadataType::Generic => 0,
+                    MetadataType::Movie => 1,
+                    MetadataType::TvShow => 2,
+                    MetadataType::MusicTrack => 3,
+                    MetadataType::Photo => 4,
+
+                    // TODO: Add variant AudiobookChapter = 5?
+                    // MetadataType::AudiobookChapter => 5?,
+
+                    MetadataType::Unknown(d) => d,
+                }
+            }
         }
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -669,7 +736,7 @@ pub mod media {
             Paused,
             Buffering,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             Unknown(String),
         }
 
@@ -689,7 +756,7 @@ pub mod media {
             #[serde(rename = "REPEAT_SINGLE")]
             Single,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             #[clap(skip)]
             Unknown(String),
         }
@@ -708,7 +775,7 @@ pub mod media {
             Live,
             Other,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             #[clap(skip)]
             Unknown(String),
         }
@@ -723,7 +790,7 @@ pub mod media {
             Raised,
             Depressed,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             #[clap(skip)]
             Unknown(String),
         }
@@ -737,7 +804,7 @@ pub mod media {
             Metadata,
             Subtitles,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             Unknown(String),
         }
 
@@ -749,7 +816,7 @@ pub mod media {
             Normal,
             RoundedCorners,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             #[clap(skip)]
             Unknown(String),
         }
@@ -761,7 +828,7 @@ pub mod media {
             Video,
             Text,
 
-            #[serde(untagged, skip_serializing)]
+            #[serde(untagged)]
             Unknown(String),
         }
 

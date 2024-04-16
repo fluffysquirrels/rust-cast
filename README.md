@@ -106,7 +106,11 @@ For all possible values of `--media-type` see [Supported Media for Google Cast](
 * [Web sender API reference](https://developers.google.com/cast/docs/reference/web_sender)
 * [Web receiver overview](https://developers.google.com/cast/docs/web_receiver)
 * [Web receiver API reference](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages)
-* [Web receiver API - MessageType](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.MessageType) (the best reference for the possible cast message types and their JSON payloads)
+* [Web receiver API - MessageType](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.MessageType)
+  (the best reference for the possible cast message types and their JSON payloads)
+
+* [Additional reference for messages in the media namespace](https://developers.google.com/cast/docs/media/messages)
+  (a subset of the messages documented in the sender and receiver references, but does document the MetadataType enum's integer values)
 
 ### Open source Chromecast libraries
 * [npm package `castv2`: an implementation of the Chromecast CASTV2 protocol in JS](https://github.com/thibauts/node-castv2);
