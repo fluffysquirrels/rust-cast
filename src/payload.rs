@@ -1600,7 +1600,8 @@ pub mod receiver {
             }
         }
 
-        /// Structure that describes possible cast device volume options.
+        /// Describes cast device volume options.
+        #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Volume {
