@@ -317,6 +317,99 @@ pub mod media {
             }
         }
 
+        mod media_commands {
+            #![allow(unused_braces)]
+
+            use serde::{Serialize, Serializer, Deserialize, Deserializer};
+
+            /// Bitfield of supported media commands.
+            ///
+            /// Documentation:
+            /// * [`Command` in Web Receiver API reference](https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.Command)
+            /// * [`MediaStatus.supportedMediaCommands` in media messages guide](https://developers.google.com/cast/docs/media/messages#MediaStatus)
+            #[modular_bitfield::bitfield]
+            #[repr(u32)]
+            #[derive(Clone, Copy, Debug)]
+            pub struct MediaCommands {
+                /// As bits: 1
+                pause: bool,
+
+                /// As bits: 2
+                seek: bool,
+
+                /// As bits: 4
+                stream_volume: bool,
+
+                /// As bits: 8
+                stream_mute: bool,
+
+                /// As bits: 16
+                skip_forward: bool,
+
+                /// As bits: 32
+                skip_backward: bool,
+
+                /// Ignore remainder of `u32`.
+                #[skip]
+                __: modular_bitfield::specifiers::B26,
+
+                // TODO: Test and add more bits from the web receiver API reference.
+            }
+
+            #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+            pub(in crate::payload::media) struct MediaCommandsObject {
+                pub pause: bool,
+                pub seek: bool,
+                pub stream_volume: bool,
+                pub stream_mute: bool,
+                pub skip_forward: bool,
+                pub skip_backward: bool,
+
+                pub as_bitfield: u32,
+            }
+
+            impl MediaCommands {
+                pub fn serialize_as_object<S>(mc: &MediaCommands, s: S)
+                -> Result<S::Ok, S::Error>
+                where S: Serializer
+                {
+                    let proxy = MediaCommandsObject::from(*mc);
+                    proxy.serialize(s)
+                }
+
+                pub fn deserialize_from_bitfield<'de, D>(d: D) -> Result<MediaCommands, D::Error>
+                where D: Deserializer<'de>
+                {
+                    let as_u32 = u32::deserialize(d)?;
+                    Ok(MediaCommands::from(as_u32))
+                }
+            }
+
+            impl From<u32> for MediaCommandsObject {
+                fn from(n: u32) -> MediaCommandsObject {
+                    let mc = MediaCommands::from(n);
+                    MediaCommandsObject::from(mc)
+                }
+            }
+
+            impl From<MediaCommands> for MediaCommandsObject {
+                fn from(mc: MediaCommands) -> MediaCommandsObject {
+                    let as_u32 = u32::from(mc);
+
+                    MediaCommandsObject {
+                        pause: mc.pause(),
+                        seek: mc.seek(),
+                        stream_volume: mc.stream_volume(),
+                        stream_mute: mc.stream_mute(),
+                        skip_forward: mc.skip_forward(),
+                        skip_backward: mc.skip_backward(),
+                        as_bitfield: as_u32,
+                    }
+                }
+            }
+        }
+        pub use media_commands::*;
+
         #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -467,20 +560,9 @@ pub mod media {
             pub queue_data: Option<QueueData>,
             pub repeat_mode: Option<RepeatMode>,
 
-            /// Bit field.
-            /// * `1` `Pause`;
-            /// * `2` `Seek`;
-            /// * `4` `Stream volume`;
-            /// * `8` `Stream mute`;
-            /// * `16` `Skip forward`;
-            /// * `32` `Skip backward`;
-            /// * `1 << 12` `Unknown`;
-            /// * `1 << 13` `Unknown`;
-            /// * `1 << 18` `Unknown`.
-            // TODO: Replace this with a bitfield type.
-            // Crate [modular-bitfield](https://docs.rs/modular-bitfield)
-            // looks excellent.
-            pub supported_media_commands: u32,
+            #[serde(serialize_with = "MediaCommands::serialize_as_object",
+                    deserialize_with = "MediaCommands::deserialize_from_bitfield")]
+            pub supported_media_commands: MediaCommands,
 
             // This field seems invalid. Volume level is always 1.0 in testing.
             // pub volume: crate::payload::receiver::Volume,
@@ -1482,6 +1564,257 @@ pub mod media {
     simple_media_request!(PlayRequest,  MESSAGE_REQUEST_TYPE_PLAY);
     simple_media_request!(PauseRequest, MESSAGE_REQUEST_TYPE_PAUSE);
     simple_media_request!(StopRequest,  MESSAGE_REQUEST_TYPE_STOP);
+
+
+
+    #[cfg(test)]
+    mod test {
+        use serde_json::json;
+        use super::*;
+
+        const EMPTY_MEDIA_COMMANDS_OBJECT: MediaCommandsObject = MediaCommandsObject {
+            pause: false,
+            seek: false,
+            stream_volume: false,
+            stream_mute: false,
+            skip_forward: false,
+            skip_backward: false,
+            as_bitfield: 0_u32,
+        };
+
+        #[test]
+        fn media_commands_round_trip() {
+            fn case(label: &str, expected: MediaCommandsObject) {
+                let input: u32 = expected.as_bitfield;
+                let bitfield = MediaCommands::from(input);
+                let output = MediaCommandsObject::from(input);
+                let round_trip: u32 = output.as_bitfield;
+
+                let description =
+                    format!("case {label:?}:\n\
+                             _ input       = {input}_u32\n\
+                             _ input (hex) = {input:#x}\n\
+                             _ input (bin) = {input:#b}\n\
+                             _ round_trip  = {round_trip}_u32\n\
+                             _ bitfield    = {bitfield:#?}\n\
+                             _ output      = {output:#?}\n\
+                             _ expected    = {expected:#?}\n\n\n");
+
+                println!("{description}");
+
+                assert_eq!(input, round_trip, "{description}");
+                assert_eq!(output, expected, "{description}");
+            }
+
+            case("empty", EMPTY_MEDIA_COMMANDS_OBJECT);
+
+            case("single bit - pause",
+                 MediaCommandsObject {
+                     pause: true,
+                     as_bitfield: 1,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("single bit - seek",
+                 MediaCommandsObject {
+                     seek: true,
+                     as_bitfield: 2,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("single bit - stream_volume",
+                 MediaCommandsObject {
+                     stream_volume: true,
+                     as_bitfield: 4,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("single bit - stream_mute",
+                 MediaCommandsObject {
+                     stream_mute: true,
+                     as_bitfield: 8,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("single bit - skip_forward",
+                 MediaCommandsObject {
+                     skip_forward: true,
+                     as_bitfield: 16,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("single bit - skip_backward",
+                 MediaCommandsObject {
+                     skip_backward: true,
+                     as_bitfield: 32,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("combination - pre-recorded video",
+                 MediaCommandsObject {
+                     pause: true,
+                     seek: true,
+                     skip_forward: true,
+                     skip_backward: true,
+                     as_bitfield: 0b110011,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("unknown bits, otherwise empty",
+                 MediaCommandsObject {
+                     as_bitfield: 0b1111_1111_1100_0000,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+
+            case("known and unknown bits",
+                 MediaCommandsObject {
+                     pause: true,
+                     seek: true,
+                     as_bitfield: 0b1111_1111_1100_0011,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+        }
+
+        #[test]
+        fn deserialize_status_entry_media_commands() {
+            fn case(label: &str, input_commands_obj: MediaCommandsObject) {
+                let input_bitfield: u32 = input_commands_obj.as_bitfield;
+                let input_commands = MediaCommands::from(input_bitfield);
+                let status_entry_json = json!({
+                    "mediaSessionId": 1,
+                    "playbackRate": 17.0,
+                    "playerState": "IDLE",
+                    "supportedMediaCommands": input_bitfield,
+                });
+                let status_entry: StatusEntry
+                    = serde_json::from_value(status_entry_json.clone()).unwrap();
+                let output_commands = status_entry.supported_media_commands;
+                let output_bitfield = u32::from(output_commands);
+                let output_commands_obj = MediaCommandsObject::from(output_bitfield);
+
+                let description =
+                    format!("case {label:?}:\n\
+                             _ input_bitfield (hex)  = {input_bitfield:#x}\n\
+                             _ output_bitfield (hex) = {output_bitfield:#x}\n\
+                             _ input_commands_obj    = {input_commands_obj:#?}\n\
+                             _ input_commands        = {input_commands:#?}\n\
+                             _ output_commands       = {output_commands:#?}\n\
+                             _ status_entry_json     = {status_entry_json:#?}\n\
+                             _ status_entry          = {status_entry:#?}\n\n");
+
+                println!("{description}");
+
+                assert_eq!(input_bitfield, output_bitfield, "{description}");
+                assert_eq!(input_commands_obj, output_commands_obj, "{description}");
+            }
+
+            case("empty", EMPTY_MEDIA_COMMANDS_OBJECT);
+
+            case("single bit - seek",
+                 MediaCommandsObject {
+                     seek: true,
+                     as_bitfield: 0b_0010,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+            case("combined known bits",
+                 MediaCommandsObject {
+                     pause: true,
+                     seek: true,
+                     as_bitfield: 0b_0011,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("unknown bits",
+                 MediaCommandsObject {
+                     as_bitfield: 0b_1100_0000,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("known and unknown bits",
+                 MediaCommandsObject {
+                     pause: true,
+                     seek: true,
+                     as_bitfield: 0b_1100_0011,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+        }
+
+        #[test]
+        fn serialize_status_entry_media_commands() {
+            fn case(label: &str, input_commands_obj: MediaCommandsObject) {
+                let entry = StatusEntry {
+                    media_session_id: 1,
+
+                    active_track_ids: None,
+                    current_item_id: None,
+                    current_time: None,
+                    idle_reason: None,
+                    items: None,
+                    loading_item_id: None,
+                    media: None,
+                    playback_rate: 1.0,
+                    player_state: PlayerState::Idle,
+                    preloaded_item_id: None,
+                    queue_data: None,
+                    repeat_mode: None,
+
+                    supported_media_commands:
+                        MediaCommands::from(input_commands_obj.as_bitfield),
+                };
+
+                let entry_json = serde_json::to_value(entry.clone()).unwrap();
+                let output_commands_json = entry_json.get("supportedMediaCommands").unwrap();
+                let expected_commands_json = serde_json::to_value(input_commands_obj.clone())
+                                                        .unwrap();
+
+                let description =
+                    format!("case {label:?}:\n\
+                             _ input_commands_obj     = {input_commands_obj:#?}\n\
+                             _ output_commands_json   = {output_commands_json:#?}\n\
+                             _ expected_commands_json = {expected_commands_json:#?}\n\
+                             _ entry_json             = {entry_json:#?}\n\n");
+
+                println!("{description}");
+
+                assert_eq!(output_commands_json, &expected_commands_json, "{description}");
+                assert_eq!(u64::from(input_commands_obj.as_bitfield),
+                           expected_commands_json.get("as_bitfield").unwrap()
+                                                 .as_u64().unwrap(),
+                           "{description}");
+            }
+
+            case("empty", EMPTY_MEDIA_COMMANDS_OBJECT);
+
+            case("single bit - seek",
+                 MediaCommandsObject {
+                     seek: true,
+                     as_bitfield: 0b_0010,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+            case("combined known bits",
+                 MediaCommandsObject {
+                     pause: true,
+                     seek: true,
+                     as_bitfield: 0b_0011,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("unknown bits",
+                 MediaCommandsObject {
+                     as_bitfield: 0b_1100_0000,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+
+            case("known and unknown bits",
+                 MediaCommandsObject {
+                     pause: true,
+                     seek: true,
+                     as_bitfield: 0b_1100_0011,
+                     ..EMPTY_MEDIA_COMMANDS_OBJECT
+                 });
+        }
+    }
 }
 
 pub mod receiver {
