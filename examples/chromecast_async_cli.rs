@@ -1,5 +1,6 @@
 use anyhow::bail;
 use clap::Parser;
+use csscolorparser::Color;
 use futures::StreamExt;
 use rust_cast::{
     self as lib,
@@ -34,13 +35,19 @@ enum Command {
     ///
     /// Subtitles are configured as text tracks.
     ///
-    /// Color arguments must be in the CSS-like format '#RRGGBBAA',
+    /// Color arguments can be given in any CSS-like format supported by the
+    /// `csscolorparser` crate (see https://docs.rs/csscolorparser ).
+    ///
+    /// That includes '#RRGGBBAA' or '#RRGGBB'
     /// with each pair of letters representing a byte in hex format
     /// for that color channel's intensity or the color's opacity (alpha channel).
     ///
     /// Color examples:
     ///
-    ///   * #ff0000ff (red, 100% opacity)
+    ///   * #ff0000ff (RGBA hex format: red, 100% opacity)
+    ///   * #f00f     (RGBA short hex format: red, 100% opacity)
+    ///   * #ff0000   (RGB hex format: red, default opacity = 100%)
+    ///   * #f00      (RGB short hex format: red, default opacity = 100%)
     ///   * #ffff0020 (yellow, 0x20 / 0xff = 32/256 opacity)
     ///   * #00000000 (0% opacity, transparent)
     #[clap(verbatim_doc_comment)]
@@ -224,10 +231,10 @@ struct TextTrackStyleArgs {
     preset: TextTrackStylePreset,
 
     #[arg(long, help = COLOR_ARG_HELP)]
-    background_color: Option<ColorArg>,
+    background_color: Option<Color>,
 
     #[arg(long, help = COLOR_ARG_HELP)]
-    edge_color: Option<ColorArg>,
+    edge_color: Option<Color>,
 
     #[arg(long, value_enum)]
     edge_type: Option<payload::media::TextTrackEdgeType>,
@@ -246,10 +253,10 @@ struct TextTrackStyleArgs {
     font_style: Option<payload::media::FontStyle>,
 
     #[arg(long, help = COLOR_ARG_HELP)]
-    foreground_color: Option<ColorArg>,
+    foreground_color: Option<Color>,
 
     #[arg(long, help = COLOR_ARG_HELP)]
-    window_color: Option<ColorArg>,
+    window_color: Option<Color>,
 
     /// Rounded corner radius absolute value in pixels (px).
     /// This value will be ignored if window_type is not RoundedCorners.
@@ -266,10 +273,11 @@ enum TextTrackStylePreset {
     Empty,
 }
 
-// TODO: Probably validate, use a strongly typed value.
-type ColorArg = String;
 const COLOR_ARG_HELP: &str =
-    "Color arguments must be in the CSS-like case-insensitive format '#RRGGBBAA'";
+    "Color arguments must be in a CSS-like format supported by the \
+       csscolorparser crate, such as '#rrggbbaa'.\n\
+     See the `--help` for the 'media-edit-tracks-info' sub-command, or \
+       https://docs.rs/csscolorparser";
 
 const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
 

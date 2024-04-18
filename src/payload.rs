@@ -31,6 +31,8 @@ use std::{
     sync::atomic::{AtomicI32, Ordering},
 };
 
+pub use csscolorparser::Color;
+
 /// i32 that represents a request_id in the Chromecast protocol.
 ///
 /// Zero is only used in broadcast responses with no corresponding request.
@@ -631,12 +633,12 @@ pub mod media {
 
             pub fn basic() -> TextTrackStyle {
                 TextTrackStyle {
-                    background_color: Some("#00000099".to_string()),
+                    background_color: Some(Color::from_str("#00000099").unwrap()),
                     font_family: Some("Droid Sans".to_string()),
                     font_generic_family: Some(FontGenericFamily::SansSerif),
                     font_scale: Some(1.2),
                     font_style: Some(FontStyle::Normal),
-                    foreground_color: Some("#ffff00ff".to_string()),
+                    foreground_color: Some(Color::from_str("#ffff00ff").unwrap()),
 
                     .. TextTrackStyle::empty()
                 }
@@ -946,10 +948,6 @@ pub mod media {
                 CustomData(serde_json::Value::Null)
             }
         }
-
-        /// Expected format: "#RRGGBBAA".
-        // TODO: Switch to a strongly typed version.
-        pub type Color = String;
 
         pub type ItemId = i32;
         pub type Seconds = f64;
