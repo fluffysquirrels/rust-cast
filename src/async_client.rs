@@ -76,6 +76,9 @@ pub struct Config {
     /// Duration for an RPC request to and response from the Chromecast.
     pub rpc_timeout: Duration,
 
+    /// Duration for a media loading RPC request to and response from the Chromecast.
+    pub load_timeout: Duration,
+
     /// After this duration without receiving a message,
     /// disconnect assuming the connection has failed.
     pub heartbeat_disconnect_timeout: Duration,
@@ -285,7 +288,8 @@ impl Config {
 
             sender: DEFAULT_SENDER_ID.to_string(),
             local_task_command_timeout: Duration::from_secs(1),
-            rpc_timeout: Duration::from_secs(10),
+            rpc_timeout: Duration::from_secs(5),
+            load_timeout: Duration::from_secs(10),
             heartbeat_disconnect_timeout: Duration::from_secs(10),
             heartbeat_ping_send_timeout: Duration::from_secs(4),
         }
@@ -373,7 +377,8 @@ impl Client {
         let payload_req = payload::receiver::GetStatusRequest {};
 
         let resp: Payload<payload::receiver::GetStatusResponse>
-            = self.json_rpc(payload_req, receiver_id).await?;
+            = self.json_rpc(payload_req, receiver_id,
+                            self.config().rpc_timeout).await?;
 
         Ok(resp.inner.0.status)
     }
@@ -389,7 +394,8 @@ impl Client {
         };
 
         let resp: Payload<payload::receiver::LaunchResponse>
-            = self.json_rpc(payload_req, destination_id).await?;
+            = self.json_rpc(payload_req, destination_id,
+                            self.config().load_timeout).await?;
 
         let payload::receiver::LaunchResponse::Ok(payload::receiver::StatusWrapper { status })
             = resp.inner else
@@ -424,7 +430,8 @@ impl Client {
         };
 
         let resp: Payload<StopResponse>
-            = self.json_rpc(payload_req, app_session.receiver_destination_id).await?;
+            = self.json_rpc(payload_req, app_session.receiver_destination_id,
+                            self.config().load_timeout).await?;
 
         let StopResponse::Ok(StatusWrapper { status }) = resp.inner else {
             bail!("{METHOD_PATH}: error response\n\
@@ -449,7 +456,8 @@ impl Client {
         };
 
         let resp: Payload<SetVolumeResponse>
-            = self.json_rpc(payload_req, destination_id).await?;
+            = self.json_rpc(payload_req, destination_id,
+                            self.config().rpc_timeout).await?;
 
         let SetVolumeResponse::Ok(StatusWrapper { status }) = resp.inner else {
             bail!("{METHOD_PATH}: error response\n\
@@ -572,7 +580,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::GetStatusResponse>
-            = self.json_rpc(payload_req, app_session.app_destination_id).await?;
+            = self.json_rpc(payload_req, app_session.app_destination_id,
+                            self.config().rpc_timeout).await?;
 
         let payload::media::GetStatusResponse::Ok(media_status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -601,7 +610,8 @@ impl Client {
             media_session_id: media_session.media_session_id,
         };
         let resp: Payload<payload::media::GetStatusResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone(),
+                            self.config().rpc_timeout).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -624,7 +634,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::LoadResponse>
-            = self.json_rpc(payload_req, app_session.app_destination_id.clone()).await?;
+            = self.json_rpc(payload_req, app_session.app_destination_id.clone(),
+                            self.config().load_timeout).await?;
 
         let payload::media::LoadResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -638,13 +649,19 @@ impl Client {
     pub async fn media_play(&mut self,
                             media_session: MediaSession)
     -> Result<payload::media::Status> {
-        self.simple_media_request(media_session, payload::media::PlayRequest).await
+        self.simple_media_request(media_session,
+                                  payload::media::PlayRequest,
+                                  self.config().rpc_timeout
+        ).await
     }
 
     pub async fn media_pause(&mut self,
                              media_session: MediaSession)
     -> Result<payload::media::Status> {
-        self.simple_media_request(media_session, payload::media::PauseRequest).await
+        self.simple_media_request(media_session,
+                                  payload::media::PauseRequest,
+                                  self.config().rpc_timeout
+        ).await
     }
 
     #[named]
@@ -658,7 +675,8 @@ impl Client {
             });
 
         let resp: Payload<payload::media::QueueGetItemIdsResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone(),
+                            self.config().rpc_timeout).await?;
 
         let payload::media::QueueGetItemIdsResponse::Ok { item_ids } = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -679,7 +697,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::QueueGetItemsResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone(),
+                            self.config().rpc_timeout).await?;
 
         Ok(resp.inner.items)
     }
@@ -696,7 +715,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::LoadResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone(),
+                            self.config().load_timeout).await?;
 
         let payload::media::LoadResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -718,7 +738,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::LoadResponse>
-            = self.json_rpc(payload_req, app_session.app_destination_id.clone()).await?;
+            = self.json_rpc(payload_req, app_session.app_destination_id.clone(),
+                            self.config().load_timeout).await?;
 
         let payload::media::LoadResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -740,7 +761,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::GetStatusResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone(),
+                            self.config().load_timeout).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -762,7 +784,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::GetStatusResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone(),
+                            self.config().load_timeout).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -784,7 +807,8 @@ impl Client {
         };
 
         let resp: Payload<payload::media::LoadResponse>
-            = self.json_rpc(payload_req, media_session.app_destination_id().clone()).await?;
+            = self.json_rpc(payload_req, media_session.app_destination_id().clone(),
+                            self.config().load_timeout).await?;
 
         let payload::media::LoadResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -798,7 +822,10 @@ impl Client {
     pub async fn media_stop(&mut self,
                             media_session: MediaSession)
     -> Result<payload::media::Status> {
-        self.simple_media_request(media_session, payload::media::StopRequest).await
+        self.simple_media_request(media_session,
+                                  payload::media::StopRequest,
+                                  self.config().rpc_timeout
+        ).await
     }
 
     #[named]
@@ -814,7 +841,8 @@ impl Client {
 
         let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req,
-                            media_session.app_destination_id().clone()).await?;
+                            media_session.app_destination_id().clone(),
+                            self.config().load_timeout).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response from seek request\n\
@@ -839,7 +867,8 @@ impl Client {
 
         let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req,
-                            media_session.app_destination_id().clone()).await?;
+                            media_session.app_destination_id().clone(),
+                            self.config().rpc_timeout).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response from seek request\n\
@@ -855,7 +884,8 @@ impl Client {
     async fn simple_media_request<Req>(
         &mut self,
         media_session: MediaSession,
-        msg_type_fn: fn(MediaRequestCommon) -> Req)
+        msg_type_fn: fn(MediaRequestCommon) -> Req,
+        duration: Duration)
     -> Result<payload::media::Status>
     where Req: payload::RequestInner
     {
@@ -866,7 +896,8 @@ impl Client {
 
         let resp: Payload<payload::media::GetStatusResponse>
             = self.json_rpc(payload_req,
-                            media_session.app_destination_id().clone()).await?;
+                            media_session.app_destination_id().clone(),
+                            duration).await?;
 
         let payload::media::GetStatusResponse::Ok(status) = resp.inner else {
             bail!("{method_path}: Error response\n\
@@ -914,7 +945,9 @@ impl Client {
         // Ensure task has stopped.
         match connection_state {
             ConnectionState::Connected => {
-                let _: Box<()> = self.task_cmd::<()>(TaskCmdType::Shutdown).await?;
+                let _: Box<()> = self.task_cmd::<()>(TaskCmdType::Shutdown,
+                                                     self.config().local_task_command_timeout
+                                 ).await?;
             },
 
             // Task should already have stopped itself.
@@ -1009,13 +1042,14 @@ impl Client {
             request_id,
         }));
 
-        let _resp: Box<()> = self.task_cmd(cmd_type).await?;
+        let _resp: Box<()> = self.task_cmd(cmd_type, self.config().rpc_timeout).await?;
 
         Ok(())
     }
 
     #[named]
-    async fn json_rpc<Req, Resp>(&mut self, req: Req, destination: EndpointId)
+    async fn json_rpc<Req, Resp>(&mut self,
+                                 req: Req, destination: EndpointId, timeout: Duration)
     -> Result<Payload<Resp>>
     where Req: RequestInner,
           Resp: ResponseInner
@@ -1034,12 +1068,13 @@ impl Client {
             response_type_names,
         }));
 
-        let resp_dyn: Box<PayloadDyn> = self.task_cmd(cmd_type).await?;
+        let resp_dyn: Box<PayloadDyn> = self.task_cmd(cmd_type, timeout).await?;
         let resp: Payload<Resp> = self.response_from_dyn(resp_dyn)?;
 
         let elapsed = start.elapsed();
 
         tracing::debug!(target: method_path!("Client"),
+                        ?start,
                         ?elapsed,
                         response_payload = ?resp,
                         response_ns,
@@ -1096,7 +1131,7 @@ impl Client {
         Ok((request_message, request_id))
     }
 
-    async fn task_cmd<R>(&mut self, cmd_type: TaskCmdType)
+    async fn task_cmd<R>(&mut self, cmd_type: TaskCmdType, timeout: Duration)
     -> Result<Box<R>>
     where R: Any + Send + Sync
     {
@@ -1111,20 +1146,13 @@ impl Client {
             },
         };
 
-        let config = self.config();
-        let command_timeout: Duration = match &cmd.command {
-            TaskCmdType::CastRpc(_) => config.rpc_timeout,
-            TaskCmdType::CastSend(_) => config.rpc_timeout,
-            TaskCmdType::Shutdown => config.local_task_command_timeout,
-        };
-
         self.task_cmd_tx.send_timeout(
             cmd,
-            config.local_task_command_timeout
+            self.config().local_task_command_timeout
         ).await?;
 
         let response: TaskResponseBox =
-            tokio::time::timeout(command_timeout, result_rx).await???;
+            tokio::time::timeout(timeout, result_rx).await???;
 
         response.downcast::<R>()
     }
