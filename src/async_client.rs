@@ -91,6 +91,7 @@ struct Shared {
     status_tx: broadcast::Sender<StatusUpdate>,
 }
 
+// struct Task
 pin_project! {
     struct Task<S: TokioAsyncStream> {
         #[pin]
@@ -278,6 +279,18 @@ pub mod app {
 pub const DEFAULT_PORT: u16 = 8009;
 
 impl Config {
+    pub fn from_addr(addr: SocketAddr) -> Config {
+        Config {
+            addr,
+
+            sender: DEFAULT_SENDER_ID.to_string(),
+            local_task_command_timeout: Duration::from_secs(1),
+            rpc_timeout: Duration::from_secs(10),
+            heartbeat_disconnect_timeout: Duration::from_secs(10),
+            heartbeat_ping_send_timeout: Duration::from_secs(4),
+        }
+    }
+
     #[tracing::instrument(level = "info", skip(self), err)]
     pub async fn connect(self) -> Result<Client> {
         let conn = tls_connect(&self).await?;
@@ -2128,20 +2141,6 @@ impl codec::Decoder for CastMessageCodec {
         };
 
         Ok(Some(msg))
-    }
-}
-
-impl Config {
-    pub fn from_addr(addr: SocketAddr) -> Config {
-        Config {
-            addr,
-
-            sender: DEFAULT_SENDER_ID.to_string(),
-            local_task_command_timeout: Duration::from_secs(1),
-            rpc_timeout: Duration::from_secs(10),
-            heartbeat_disconnect_timeout: Duration::from_secs(10),
-            heartbeat_ping_send_timeout: Duration::from_secs(4),
-        }
     }
 }
 

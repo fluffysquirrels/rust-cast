@@ -33,7 +33,10 @@ enum RecordKindVariant {
     TXT,
 }
 
+/// TODO: Make this configurable.
 const DISCOVER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// TODO: Make this configurable.
 const DISCOVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[tracing::instrument(level = "debug", ret, err)]
