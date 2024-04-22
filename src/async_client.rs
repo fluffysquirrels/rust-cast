@@ -68,24 +68,21 @@ pub struct Config {
     pub addr: SocketAddr,
 
     /// `EndpointId` used as the sender, and source of messages we send.
-    ///
-    /// Set `None` for the default, or `Some(a)` will override it.
-    pub sender: Option<EndpointId>,
+    pub sender: EndpointId,
 
-    /// Duration for the Task to do something locally. (Probably a bit high).
-    pub local_task_command_timeout: Option<Duration>,
+    /// Duration for the Task to do something locally.
+    pub local_task_command_timeout: Duration,
 
     /// Duration for an RPC request to and response from the Chromecast.
-    pub rpc_timeout: Option<Duration>,
+    pub rpc_timeout: Duration,
 
     /// After this duration without receiving a message,
     /// disconnect assuming the connection has failed.
-    pub heartbeat_disconnect_timeout: Option<Duration>,
+    pub heartbeat_disconnect_timeout: Duration,
 
     /// After this duration without receiving a message,
     /// send a ping message to the receiver.
-    pub heartbeat_ping_send_timeout: Option<Duration>,
-
+    pub heartbeat_ping_send_timeout: Duration,
 }
 
 /// Data shared between `Client` and its `Task`.
@@ -246,14 +243,6 @@ pub struct ReceiverStatuses {
     pub receiver_status: payload::receiver::Status,
     pub media_statuses: Vec<(MediaSession, payload::media::StatusEntry)>,
 }
-
-pub const DEFAULT_LOCAL_TASK_COMMAND_TIMEOUT: Duration = Duration::from_millis(1_000);
-
-pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_millis(10_000);
-
-pub const DEFAULT_HEARTBEAT_DISCONNECT_TIMEOUT: Duration = Duration::from_millis(10_000);
-
-pub const DEFAULT_HEARTBEAT_PING_SEND_TIMEOUT: Duration = Duration::from_millis(4_000);
 
 const DATA_BUFFER_LEN: usize = 64 * 1024;
 
@@ -927,7 +916,7 @@ impl Client {
         let join_fut = self.task_join_handle.take()
                            .expect("task_join_handle is Some(_) until .close().");
 
-        tokio::time::timeout(self.config().local_task_command_timeout(), join_fut).await???;
+        tokio::time::timeout(self.config().local_task_command_timeout, join_fut).await???;
 
         Ok(())
     }
@@ -1062,7 +1051,7 @@ impl Client {
             inner: req,
         };
 
-        let sender = self.config().sender();
+        let sender = self.config().sender.clone();
         let request_namespace = Req::CHANNEL_NAMESPACE.to_string();
 
         tracing::debug!(target: METHOD_PATH,
@@ -1110,14 +1099,14 @@ impl Client {
 
         let config = self.config();
         let command_timeout: Duration = match &cmd.command {
-            TaskCmdType::CastRpc(_) => config.rpc_timeout(),
-            TaskCmdType::CastSend(_) => config.rpc_timeout(),
-            TaskCmdType::Shutdown => config.local_task_command_timeout(),
+            TaskCmdType::CastRpc(_) => config.rpc_timeout,
+            TaskCmdType::CastSend(_) => config.rpc_timeout,
+            TaskCmdType::Shutdown => config.local_task_command_timeout,
         };
 
         self.task_cmd_tx.send_timeout(
             cmd,
-            config.local_task_command_timeout()
+            config.local_task_command_timeout
         ).await?;
 
         let response: TaskResponseBox =
@@ -1164,7 +1153,7 @@ async fn tls_connect(config: &Config)
 {
     const FUNCTION_PATH: &str = function_path!();
 
-    let deadline = tokio::time::Instant::now() + config.rpc_timeout();
+    let deadline = tokio::time::Instant::now() + config.rpc_timeout;
 
     let addr = &config.addr;
     let ip: IpAddr = addr.ip();
@@ -1233,9 +1222,9 @@ impl<S: TokioAsyncStream> Task<S> {
             task_cmd_rx,
             timeout_queue,
             heartbeat_disconnect_timeout: tokio::time::sleep(
-                shared.config.heartbeat_disconnect_timeout()),
+                shared.config.heartbeat_disconnect_timeout),
             heartbeat_ping_send_timeout: tokio::time::sleep(
-                shared.config.heartbeat_ping_send_timeout()),
+                shared.config.heartbeat_ping_send_timeout),
             flush: None,
             closed: false,
             requests_map: HashMap::new(),
@@ -1306,7 +1295,7 @@ impl<S: TokioAsyncStream> Task<S> {
                 },
 
                 TaskEvent::HeartbeatDisconnectTimeout => {
-                    let disconnect_timeout = this.config().heartbeat_disconnect_timeout();
+                    let disconnect_timeout = this.config().heartbeat_disconnect_timeout;
 
                     tracing::warn!(
                         target: METHOD_PATH,
@@ -1402,7 +1391,7 @@ impl<S: TokioAsyncStream> Task<S> {
         const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = tokio::time::Instant::now()
-            .checked_add(self.config().rpc_timeout())
+            .checked_add(self.config().rpc_timeout)
             .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
 
         let send_debug = format!("{send:#?}");
@@ -1442,7 +1431,7 @@ impl<S: TokioAsyncStream> Task<S> {
         const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = tokio::time::Instant::now()
-            .checked_add(self.config().rpc_timeout())
+            .checked_add(self.config().rpc_timeout)
             .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
 
         let rpc_debug = format!("{rpc:#?}");
@@ -1500,7 +1489,7 @@ impl<S: TokioAsyncStream> Task<S> {
         const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = tokio::time::Instant::now()
-            .checked_add(self.config().rpc_timeout())
+            .checked_add(self.config().rpc_timeout)
             .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
 
         let msg_debug = format!("{msg:?}");
@@ -1558,9 +1547,9 @@ impl<S: TokioAsyncStream> Task<S> {
         // # Reset the heartbeat timeouts.
         let instant_now = tokio::time::Instant::now();
         let heartbeat_disconnect_deadline =
-            instant_now + self.config().heartbeat_disconnect_timeout();
+            instant_now + self.config().heartbeat_disconnect_timeout;
         let heartbeat_ping_send_deadline =
-            instant_now + self.config().heartbeat_ping_send_timeout();
+            instant_now + self.config().heartbeat_ping_send_timeout;
 
         self.as_mut().project().heartbeat_disconnect_timeout
             .reset(heartbeat_disconnect_deadline);
@@ -1786,7 +1775,7 @@ impl<S: TokioAsyncStream> Task<S> {
                         "received ping");
 
         // # Send pong.
-        let source = self.config().sender();
+        let source = self.config().sender.clone();
         let pong_pd = Payload::<payload::heartbeat::Pong> {
             request_id: None,
             typ: payload::heartbeat::MESSAGE_TYPE_PONG.into(),
@@ -1823,7 +1812,7 @@ impl<S: TokioAsyncStream> Task<S> {
     async fn handle_heartbeat_ping_send_timeout(mut self: Pin<&mut Self>) {
         const METHOD_PATH: &str = method_path!("Task");
 
-        let ping_send_timeout = self.config().heartbeat_ping_send_timeout();
+        let ping_send_timeout = self.config().heartbeat_ping_send_timeout;
 
         tracing::debug!(target: METHOD_PATH,
                         ?ping_send_timeout,
@@ -1837,7 +1826,7 @@ impl<S: TokioAsyncStream> Task<S> {
             .reset(heartbeat_ping_send_deadline);
 
         // # Send ping.
-        let source = self.config().sender();
+        let source = self.config().sender.clone();
         let ping_pd = Payload::<payload::heartbeat::Ping> {
             request_id: None,
             typ: payload::heartbeat::MESSAGE_TYPE_PING.into(),
@@ -2147,34 +2136,12 @@ impl Config {
         Config {
             addr,
 
-            sender: None,
-            local_task_command_timeout: None,
-            rpc_timeout: None,
-            heartbeat_disconnect_timeout: None,
-            heartbeat_ping_send_timeout: None,
+            sender: DEFAULT_SENDER_ID.to_string(),
+            local_task_command_timeout: Duration::from_secs(1),
+            rpc_timeout: Duration::from_secs(10),
+            heartbeat_disconnect_timeout: Duration::from_secs(10),
+            heartbeat_ping_send_timeout: Duration::from_secs(4),
         }
-    }
-
-    fn sender(&self) -> EndpointId {
-        self.sender.as_ref()
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_SENDER_ID.to_string())
-    }
-
-    fn heartbeat_disconnect_timeout(&self) -> Duration {
-        self.heartbeat_disconnect_timeout.unwrap_or(DEFAULT_HEARTBEAT_DISCONNECT_TIMEOUT)
-    }
-
-    fn heartbeat_ping_send_timeout(&self) -> Duration {
-        self.heartbeat_ping_send_timeout.unwrap_or(DEFAULT_HEARTBEAT_PING_SEND_TIMEOUT)
-    }
-
-    fn rpc_timeout(&self) -> Duration {
-        self.rpc_timeout.unwrap_or(DEFAULT_RPC_TIMEOUT)
-    }
-
-    fn local_task_command_timeout(&self) -> Duration {
-        self.local_task_command_timeout.unwrap_or(DEFAULT_LOCAL_TASK_COMMAND_TIMEOUT)
     }
 }
 
