@@ -36,7 +36,7 @@ pub mod types;
 // use rustls::{ClientConnection, StreamOwned};
 
 
-#[cfg(any())] // Disabled. TODO: Rewrite sync Client to use a common base with async_client.
+#[cfg(FALSE)] // Disabled. TODO: Rewrite sync Client to use a common base with async_client.
 mod boop {
 
 #[cfg(feature = "thread_safe")]
