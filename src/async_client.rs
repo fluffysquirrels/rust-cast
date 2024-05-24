@@ -231,7 +231,7 @@ pub enum ConnectionState {
     ClosedErr,
 }
 
-#[cfg(FALSE)] // Disabled for now, may come back to it.
+#[cfg(any())] // Disabled for now, may come back to it.
 #[derive(Clone, Debug)]
 pub struct ErrorStatus {
     // TODO: Implement this.
@@ -330,7 +330,7 @@ impl Config {
 
 // Public methods
 impl Client {
-    #[cfg(FALSE)] // Not implemented yet.
+    #[cfg(any())] // Not implemented yet.
     pub async fn reconnect(&mut self) -> Result<()> {
         todo!(
             "Use a new private variant of Config::connect that re-uses existing status_tx\n\
