@@ -195,7 +195,7 @@ struct SetVolumeArgs {
 #[derive(clap::Args, Clone, Debug)]
 struct SeekArgs {
     #[arg(long)]
-    time: Option<f64>,
+    time_secs: Option<f64>,
 
     // TODO: offset: Option<f64>,
 
@@ -687,7 +687,7 @@ async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> 
     let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
     let seek_args = payload::media::SeekRequestArgs {
         custom_data: CustomData::default(),
-        current_time: sub_args.time,
+        current_time: sub_args.time_secs.map(|s| payload::media::Seconds(s.into())),
         resume_state: sub_args.resume_state,
     };
     let media_status = client.media_seek(media_session,
@@ -805,21 +805,22 @@ impl TryInto<payload::media::TextTrackStyle> for TextTrackStyleArgs {
             TextTrackStylePreset::Empty => payload::media::TextTrackStyle::empty(),
         };
 
-        Ok(payload::media::TextTrackStyle {
-            background_color: self.background_color.or(preset.background_color),
+        let from_args = payload::media::TextTrackStyle {
+            background_color: self.background_color,
             custom_data: CustomData::default(),
-            edge_color: self.edge_color.or(preset.edge_color),
-            edge_type: self.edge_type.or(preset.edge_type),
-            font_family: self.font_family.or(preset.font_family),
-            font_generic_family: self.font_generic_family.or(preset.font_generic_family),
-            font_scale: self.font_scale.or(preset.font_scale),
-            font_style: self.font_style.or(preset.font_style),
-            foreground_color: self.foreground_color.or(preset.foreground_color),
-            window_color: self.window_color.or(preset.window_color),
-            window_rounded_corner_radius: self.window_rounded_corner_radius
-                                    .or(preset.window_rounded_corner_radius),
-            window_type: self.window_type.or(preset.window_type),
-        })
+            edge_color: self.edge_color,
+            edge_type: self.edge_type,
+            font_family: self.font_family,
+            font_generic_family: self.font_generic_family,
+            font_scale: self.font_scale,
+            font_style: self.font_style,
+            foreground_color: self.foreground_color,
+            window_color: self.window_color,
+            window_rounded_corner_radius: self.window_rounded_corner_radius,
+            window_type: self.window_type,
+        };
+
+        Ok(preset.merge_overrides(from_args))
     }
 }
 

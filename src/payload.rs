@@ -29,6 +29,7 @@ use std::{
     fmt::{self, Debug, Display},
     str::FromStr,
     sync::atomic::{AtomicI32, Ordering},
+    time::Duration,
 };
 
 pub use csscolorparser::Color;
@@ -278,7 +279,7 @@ pub mod media {
             pub fn from_content_id(content_id: impl Into<String>) -> Media {
                 Media {
                     content_id: content_id.into(),
-                    content_type: MimeType::default(),
+                    content_type: MIME_EMPTY.into(),
                     content_url: None,
                     custom_data: CustomData::default(),
                     duration: None,
@@ -413,7 +414,7 @@ pub mod media {
         pub use media_commands::*;
 
         #[skip_serializing_none]
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Metadata {
             pub metadata_type: MetadataType,
@@ -643,6 +644,25 @@ pub mod media {
                     .. TextTrackStyle::empty()
                 }
             }
+
+            pub fn merge_overrides(self, overrides: TextTrackStyle) -> TextTrackStyle {
+                Self {
+                    background_color: overrides.background_color.or(self.background_color),
+                    custom_data: overrides.custom_data.or(self.custom_data),
+                    edge_color: overrides.edge_color.or(self.edge_color),
+                    edge_type: overrides.edge_type.or(self.edge_type),
+                    font_family: overrides.font_family.or(self.font_family),
+                    font_generic_family: overrides.font_generic_family
+                                                  .or(self.font_generic_family),
+                    font_scale: overrides.font_scale.or(self.font_scale),
+                    font_style: overrides.font_style.or(self.font_style),
+                    foreground_color: overrides.foreground_color.or(self.foreground_color),
+                    window_color: overrides.window_color.or(self.window_color),
+                    window_rounded_corner_radius: overrides.window_rounded_corner_radius
+                                                           .or(self.window_rounded_corner_radius),
+                    window_type: overrides.window_type.or(self.window_type),
+                }
+            }
         }
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -761,10 +781,11 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
         #[repr(u8)] // Discriminant stored as u8.
         #[serde(from = "i32", into = "i32")]
         pub enum MetadataType {
+            #[default]
             Generic = 0,
             Movie = 1,
             TvShow = 2,
@@ -947,15 +968,57 @@ pub mod media {
             pub fn new() -> CustomData {
                 CustomData(serde_json::Value::Null)
             }
+
+            pub fn from_serialize<T: Serialize>(v: T) -> Result<CustomData> {
+                Ok(CustomData(serde_json::to_value(v)?))
+            }
+
+            pub fn is_null(&self) -> bool {
+                self.0.is_null()
+            }
+
+            pub fn or(self, fallback: CustomData) -> CustomData {
+                if self.is_null() {
+                    fallback
+                }
+                else {
+                    self
+                }
+            }
         }
 
-        pub type ItemId = i32;
-        pub type Seconds = f64;
+        #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+        #[serde(transparent)]
+        pub struct Seconds(pub f64);
 
+        impl From<&Duration> for Seconds {
+            fn from(dur: &Duration) -> Seconds {
+                (*dur).into()
+            }
+        }
+
+        impl From<Duration> for Seconds {
+            fn from(dur: Duration) -> Seconds {
+                Seconds(dur.as_secs_f64())
+            }
+        }
+
+        impl From<Seconds> for Duration {
+            fn from(s: Seconds) -> Duration {
+                Duration::from_secs_f64(s.0)
+            }
+        }
+
+        // TODO: Switch to newtype.
+        pub type ItemId = i32;
+
+        // TODO: Switch to newtype.
         pub type TrackId = i32;
         pub const TRACK_ID_FIRST: TrackId = 1;
 
+        // TODO: Switch to newtype.
         pub type MimeType = String;
+        pub const MIME_EMPTY: &str = "";
         pub const MIME_TEXT_VTT: &str = "text/vtt";
     }
     pub use self::shared::*;
@@ -1329,7 +1392,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Default, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueLoadRequestArgs {
         pub current_time: Option<Seconds>,
