@@ -211,13 +211,12 @@ pub enum StatusMessage {
     /// Connection closed due to an error.
     ClosedErr,
 
-    // TODO: Implement these.
+    // TODO: Implement these?
     // HeartbeatPingSent,
     // HeartbeatPongSent,
 
-    // Box these?
-    Media(payload::media::Status),
-    Receiver(payload::receiver::Status),
+    Media(MediaStatusMessage),
+    Receiver(ReceiverStatusMessage),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -239,6 +238,18 @@ pub struct ErrorStatus {
     // pub io_error_kind: Option<std::io::ErrorKind>,
 
     // pub connected: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReceiverStatusMessage {
+    pub receiver_id: AppId,
+    pub receiver_status: payload::receiver::Status,
+}
+
+#[derive(Clone, Debug)]
+pub struct MediaStatusMessage {
+    pub app_destination_id: AppId,
+    pub media_status: payload::media::Status,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -269,6 +280,7 @@ pub const DEFAULT_SENDER_ID: EndpointIdConst = "sender-0";
 pub const DEFAULT_RECEIVER_ID: EndpointIdConst = "receiver-0";
 
 /// Well known cast receiver app IDs
+// TODO: Move to payload::receiver.
 pub mod app {
     use crate::types::AppIdConst;
 
@@ -1624,7 +1636,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
         tracing::trace!(target: METHOD_PATH,
                         pd_json_str,
-                        "message payload json");
+                        "message payload json string");
 
         let pd_all_dyn: serde_json::Value = match serde_json::from_str(pd_json_str) {
             Err(err) => {
@@ -1650,6 +1662,12 @@ impl<S: TokioAsyncStream> Task<S> {
         };
 
         let pd_type = &pd.typ;
+
+        tracing::trace!(target: METHOD_PATH,
+                        ?pd,
+                        "pd.request_id" = pd.request_id.map(|id| id.inner()),
+                        "pd.typ" = ?pd_type,
+                        "message payload as PayloadDyn");
 
         let msg_is_broadcast = msg.destination.as_str() == ENDPOINT_BROADCAST;
         if msg_is_broadcast {
@@ -1965,11 +1983,14 @@ impl<S: TokioAsyncStream> Task<S> {
                 }
             };
 
-        let payload::receiver::StatusWrapper { status: recv_status } = pd_typed.inner.0;
+        let payload::receiver::StatusWrapper { status: receiver_status } = pd_typed.inner.0;
 
         let update = StatusUpdate {
             time: msg_time,
-            msg: StatusMessage::Receiver(recv_status),
+            msg: StatusMessage::Receiver(ReceiverStatusMessage {
+                receiver_status,
+                receiver_id: msg.source.clone(),
+            }),
         };
         self.publish_status_update(update);
     }
@@ -1991,7 +2012,10 @@ impl<S: TokioAsyncStream> Task<S> {
 
         let update = StatusUpdate {
             time: msg_time,
-            msg: StatusMessage::Media(pd_typed.inner),
+            msg: StatusMessage::Media(MediaStatusMessage {
+                app_destination_id: msg.source.clone(),
+                media_status: pd_typed.inner,
+            }),
         };
         self.publish_status_update(update);
     }
@@ -2187,6 +2211,9 @@ pub mod small_debug {
 
     pub struct StatusUpdate<'a>(pub &'a super::StatusUpdate);
     pub struct StatusMessage<'a>(pub &'a super::StatusMessage);
+    pub struct ReceiverStatusMessage<'a>(pub &'a super::ReceiverStatusMessage);
+    pub struct MediaStatusMessage<'a>(pub &'a super::MediaStatusMessage);
+
 
     impl<'a> Debug for self::StatusUpdate<'a> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -2201,13 +2228,33 @@ pub mod small_debug {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self.0 {
                 super::StatusMessage::Media(ms) =>
-                    Debug::fmt(&payload::media::small_debug::MediaStatus(&ms), f),
+                    Debug::fmt(&MediaStatusMessage(&ms), f),
 
                 super::StatusMessage::Receiver(rs) =>
-                    Debug::fmt(&payload::receiver::small_debug::ReceiverStatus(&rs), f),
+                    Debug::fmt(&ReceiverStatusMessage(&rs), f),
 
                 _ => Debug::fmt(self, f),
             }
+        }
+    }
+
+    impl<'a> Debug for self::MediaStatusMessage<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.debug_struct("MediaStatusMessage")
+             .field("app_destination_id", &self.0.app_destination_id)
+             .field("media_status", &payload::media::small_debug::MediaStatus(
+                                        &self.0.media_status))
+             .finish()
+        }
+    }
+
+    impl<'a> Debug for self::ReceiverStatusMessage<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.debug_struct("MediaStatusMessage")
+             .field("receiver_id", &self.0.receiver_id)
+             .field("receiver_status", &payload::receiver::small_debug::ReceiverStatus(
+                                           &self.0.receiver_status))
+             .finish()
         }
     }
 }

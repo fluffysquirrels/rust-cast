@@ -376,9 +376,8 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
                     // TODO: Support this optionally in Client?
                     if let client::StatusMessage::Receiver(status) = update.msg {
                         for media_app in
-                               status.applications
-                                   .iter()
-                                   .filter(|app| app.has_namespace(MEDIA_NS))
+                               status.receiver_status.applications.iter()
+                                     .filter(|app| app.has_namespace(MEDIA_NS))
                         {
                             client.connection_connect(media_app.transport_id.clone()).await?;
                         }

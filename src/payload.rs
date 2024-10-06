@@ -43,16 +43,6 @@ pub struct RequestId(i32);
 
 pub(crate) struct RequestIdGen(AtomicI32);
 
-impl RequestId {
-    pub const BROADCAST: RequestId = RequestId(Self::BROADCAST_I32);
-    const BROADCAST_I32: i32 = 0;
-}
-
-impl RequestIdGen {
-    /// Some broadcasts have `request_id` 0, so skip that.
-    const INITIAL_I32: i32 = RequestId::BROADCAST_I32 + 1;
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Payload<T>
@@ -85,6 +75,9 @@ pub const USER_AGENT: &str = "RustCast; https://github.com/azasypkin/rust-cast";
 
 
 impl RequestId {
+    pub const BROADCAST: RequestId = RequestId(Self::BROADCAST_I32);
+    const BROADCAST_I32: i32 = 0;
+
     pub fn inner(self) -> i32 {
         self.0
     }
@@ -121,6 +114,9 @@ impl Display for RequestId {
 }
 
 impl RequestIdGen {
+    /// Some broadcasts have `request_id` 0, so skip that.
+    const INITIAL_I32: i32 = RequestId::BROADCAST_I32 + 1;
+
     pub(crate) fn new() -> RequestIdGen {
         RequestIdGen(AtomicI32::new(Self::INITIAL_I32))
     }
@@ -291,7 +287,7 @@ pub mod media {
                 }
             }
 
-            pub fn with_track(mut self, track: Track) -> Result<Media> {
+            pub fn push_track(&mut self, track: Track) -> Result<&mut Media> {
                 match &mut self.tracks {
                     None => self.tracks = Some(vec![
                         Track {
@@ -316,6 +312,11 @@ pub mod media {
                     },
                 };
 
+                Ok(self)
+            }
+
+            pub fn with_track(mut self, track: Track) -> Result<Media> {
+                self.push_track(track)?;
                 Ok(self)
             }
         }
@@ -758,7 +759,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum IdleReason {
             Cancelled,
@@ -770,7 +771,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum MediaCategory {
             Audio,
@@ -781,7 +782,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+        #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
         #[repr(u8)] // Discriminant stored as u8.
         #[serde(from = "i32", into = "i32")]
         pub enum MetadataType {
@@ -833,7 +834,7 @@ pub mod media {
             }
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum PlayerState {
             Idle,
@@ -845,7 +846,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum RepeatMode {
@@ -872,7 +873,7 @@ pub mod media {
             }
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum StreamType {
@@ -900,7 +901,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum TextTrackType {
             Captions,
@@ -926,7 +927,7 @@ pub mod media {
             Unknown(String),
         }
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         pub enum TrackType {
             Audio,
@@ -973,6 +974,14 @@ pub mod media {
                 Ok(CustomData(serde_json::to_value(v)?))
             }
 
+            pub fn to_deserialize<T: DeserializeOwned>(&self) -> Result<T> {
+                self.clone().into_deserialize()
+            }
+
+            pub fn into_deserialize<T: DeserializeOwned>(self) -> Result<T> {
+                Ok(serde_json::from_value(self.0)?)
+            }
+
             pub fn is_null(&self) -> bool {
                 self.0.is_null()
             }
@@ -984,6 +993,10 @@ pub mod media {
                 else {
                     self
                 }
+            }
+
+            pub fn take(&mut self) -> CustomData {
+                CustomData(self.0.take())
             }
         }
 
@@ -1342,7 +1355,7 @@ pub mod media {
     }
 
     #[skip_serializing_none]
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Default, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct QueueInsertRequestArgs {
         #[serde(default)]
