@@ -1176,7 +1176,7 @@ impl Client {
     }
 
     fn take_command_id(&self) -> CommandId {
-        self.next_command_id.fetch_add(1, Ordering::SeqCst)
+        self.next_command_id.fetch_add(1, Ordering::AcqRel)
     }
 }
 

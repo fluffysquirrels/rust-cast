@@ -123,7 +123,7 @@ impl RequestIdGen {
 
     pub(crate) fn take_next(&self) -> RequestId {
         loop {
-            let id = self.0.fetch_add(1, Ordering::SeqCst);
+            let id = self.0.fetch_add(1, Ordering::AcqRel);
             if id == RequestId::BROADCAST_I32 {
                 // Receivers use 0 for broadcast messages, take the next value.
                 continue;
