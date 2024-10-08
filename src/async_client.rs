@@ -349,6 +349,8 @@ impl Client {
              then mem::replace(self, new)");
     }
 
+    /// NB: If a media app is running, this will connect to it and hence the
+    /// client will receive media status updates.
     pub async fn get_statuses(&mut self, receiver_id: EndpointId)
     -> Result<ReceiverStatuses>
     {
@@ -366,13 +368,13 @@ impl Client {
             let media_status = self.media_status(app_session.clone(),
                                                  /* media_session_id: */ None).await?;
 
-            for media_status_entry in media_status.entries.iter() {
+            for media_status_entry in media_status.entries.into_iter() {
                 let media_session = MediaSession {
                     app_session: app_session.clone(),
                     media_session_id: media_status_entry.media_session_id,
                 };
 
-                media_statuses.push((media_session, media_status_entry.clone()));
+                media_statuses.push((media_session, media_status_entry));
             }
         }
 
