@@ -5,7 +5,7 @@ use futures::StreamExt;
 use rust_cast::{
     self as lib,
     async_client::{self as client, Client, Error, Result},
-    message::EndpointId::DEFAULT_RECEIVER as RECEIVER,
+    message::EndpointId,
     payload::{self, media::{CustomData, ItemId}},
     types::{MediaSession, NamespaceConst},
     /* function_path, named, */
@@ -281,6 +281,9 @@ const COLOR_ARG_HELP: &str =
 
 const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
 
+const RECEIVER: EndpointId = EndpointId::DEFAULT_RECEIVER;
+
+
 #[tokio::main]
 // #[named]
 async fn main() -> Result<()> {
@@ -441,7 +444,7 @@ async fn app_stop_main(client: &mut Client) -> Result<()> {
                _ status = {initial_status:#?}");
     };
 
-    let app_session = app.to_app_session(RECEIVER_ID.into())?;
+    let app_session = app.to_app_session(RECEIVER)?;
 
     let stop_status = client.receiver_stop_app(app_session).await?;
 
@@ -492,7 +495,7 @@ async fn media_edit_tracks_info_main(client: &mut Client, sub_args: MediaEditTra
                           },
     };
 
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_edit_tracks_info(
                            media_session,
                            args
@@ -522,14 +525,14 @@ async fn media_load_main(client: &mut Client, sub_args: MediaLoadArgs) -> Result
 }
 
 async fn media_pause_main(client: &mut Client) -> Result<()> {
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_pause(media_session).await?;
     print_media_status(&media_status);
     Ok(())
 }
 
 async fn media_play_main(client: &mut Client) -> Result<()> {
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_play(media_session).await?;
     print_media_status(&media_status);
     Ok(())
@@ -543,7 +546,7 @@ async fn media_queue_get_items_main(client: &mut Client, sub_args: MediaQueueGet
         item_ids: sub_args.items,
     };
 
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let items = client.media_queue_get_items(media_session, args).await?;
     println!("Queue items: {items:#?}");
     Ok(())
@@ -551,7 +554,7 @@ async fn media_queue_get_items_main(client: &mut Client, sub_args: MediaQueueGet
 
 async fn media_queue_get_item_ids_main(client: &mut Client) -> Result<()>
 {
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let item_ids = client.media_queue_get_item_ids(media_session).await?;
     println!("Queue item IDs: {item_ids:#?}");
     Ok(())
@@ -574,7 +577,7 @@ async fn media_queue_jump_main(client: &mut Client, sub_args: MediaQueueJumpArgs
                    _ sub_args = {sub_args:#?}");
         };
 
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_queue_update(media_session, args).await?;
     print_media_status(&media_status);
 
@@ -593,7 +596,7 @@ async fn media_queue_insert_main(client: &mut Client, sub_args: MediaQueueInsert
     };
 
     let media_session = client.media_get_default_media_session(
-                            RECEIVER_ID.into()).await?;
+                            RECEIVER).await?;
     let media_status = client.media_queue_insert(media_session, args).await?;
     print_media_status(&media_status);
 
@@ -615,7 +618,7 @@ async fn media_queue_load_main(client: &mut Client, sub_args: MediaQueueLoadArgs
         start_index: None,
     };
 
-    let app_session = client.media_get_or_launch_default_app_session(RECEIVER_ID.into()).await?;
+    let app_session = client.media_get_or_launch_default_app_session(RECEIVER).await?;
     let media_status = client.media_queue_load(app_session, args).await?;
     print_media_status(&media_status);
 
@@ -640,7 +643,7 @@ async fn media_queue_remove_main(client: &mut Client, sub_args: MediaQueueRemove
     };
 
     let media_session = client.media_get_default_media_session(
-                            RECEIVER_ID.into()).await?;
+                            RECEIVER).await?;
     let media_status = client.media_queue_remove(media_session, args).await?;
     print_media_status(&media_status);
 
@@ -666,7 +669,7 @@ async fn media_queue_reorder_main(client: &mut Client, sub_args: MediaQueueReord
     };
 
     let media_session = client.media_get_default_media_session(
-                            RECEIVER_ID.into()).await?;
+                            RECEIVER).await?;
     let media_status = client.media_queue_reorder(media_session, args).await?;
     print_media_status(&media_status);
 
@@ -676,14 +679,14 @@ async fn media_queue_reorder_main(client: &mut Client, sub_args: MediaQueueReord
 }
 
 async fn media_stop_main(client: &mut Client) -> Result<()> {
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_stop(media_session).await?;
     print_media_status(&media_status);
     Ok(())
 }
 
 async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> {
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let seek_args = payload::media::SeekRequestArgs {
         custom_data: CustomData::default(),
         current_time: sub_args.time_secs.map(|s| payload::media::Seconds(s.into())),
@@ -699,7 +702,7 @@ async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> 
 // TODO: Test.
 async fn set_playback_rate_main(client: &mut Client, sub_args: SetPlaybackRateArgs) -> Result<()>
 {
-    let media_session = client.media_get_media_session(RECEIVER_ID.into()).await?;
+    let media_session = client.media_get_media_session(RECEIVER).await?;
     let args = payload::media::SetPlaybackRateRequestArgs {
         custom_data: CustomData::default(),
         playback_rate: sub_args.playback_rate,
