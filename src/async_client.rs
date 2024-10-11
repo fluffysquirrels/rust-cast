@@ -10,11 +10,10 @@ use crate::{
     },
     payload::{self, MessageType, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner,
               ResponseInner,
-              media::{CustomData, MediaRequestCommon},
+              media::{CustomData, MediaRequestCommon, MediaSessionId},
               receiver::AppId },
     types::{AppSession, /* AppSessionId, */
-            MediaSession, /* MediaSessionId, */
-            MediaSessionId},
+            MediaSession },
     util::{named},
 };
 use futures::{

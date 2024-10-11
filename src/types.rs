@@ -2,13 +2,12 @@
 
 use crate::{
     message::EndpointId,
-    payload::receiver::AppSessionId,
+    payload::{
+        media::MediaSessionId,
+        receiver::AppSessionId,
+    },
 };
 use serde::{Deserialize, Serialize};
-
-/// Unique ID for the playback of an item in this app session.
-/// This ID is set by the receiver at LOAD.
-pub type MediaSessionId = i32;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AppSession {

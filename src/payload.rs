@@ -17,8 +17,7 @@ use anyhow::{bail, format_err};
 use crate::{
     async_client::Result,
     message::{EndpointId, Namespace},
-    types::{AppSession,
-            MediaSessionId },
+    types::AppSession,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -283,6 +282,38 @@ pub mod media {
 
     mod shared {
         use super::*;
+
+        /// Unique ID for the playback of an item in this app session.
+        /// This ID is set by the receiver when processing a `LOAD` message.
+        #[derive(Clone, Copy, Debug,
+                 Hash, Eq, PartialEq, Ord, PartialOrd,
+                 Deserialize, Serialize)]
+        #[serde(transparent)]
+        pub struct MediaSessionId(i32);
+
+        impl MediaSessionId {
+            pub fn to_i32(self) -> i32 {
+                self.0
+            }
+        }
+
+        impl From<i32> for MediaSessionId {
+            fn from(id: i32) -> Self {
+                Self(id)
+            }
+        }
+
+        impl From<MediaSessionId> for i32 {
+            fn from(id: MediaSessionId) -> i32 {
+                id.0
+            }
+        }
+
+        impl Display for MediaSessionId {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                Display::fmt(&self.0, f)
+            }
+        }
 
         #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1865,7 +1896,7 @@ pub mod media {
         fn serialize_status_entry_media_commands() {
             fn case(label: &str, input_commands_obj: MediaCommandsObject) {
                 let entry = StatusEntry {
-                    media_session_id: 1,
+                    media_session_id: 1.into(),
 
                     active_track_ids: None,
                     current_item_id: None,
