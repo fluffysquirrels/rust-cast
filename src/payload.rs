@@ -1923,6 +1923,7 @@ pub mod receiver {
             pub const BACKDROP: AppId = AppId::from_const("E8C28D3C");
             pub const NETFLIX: AppId = AppId::from_const("CA5E8412");
             pub const SPOTIFY: AppId = AppId::from_const("CC32E753");
+            pub const TWITCH: AppId = AppId::from_const("B3DCF968");
             pub const YOUTUBE: AppId = AppId::from_const("233637DE");
         }
 
