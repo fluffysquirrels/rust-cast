@@ -352,7 +352,7 @@ pub mod media {
             pub fn from_content_id(content_id: impl Into<String>) -> Media {
                 Media {
                     content_id: content_id.into(),
-                    content_type: MIME_EMPTY.into(),
+                    content_type: MimeType::EMPTY,
                     content_url: None,
                     custom_data: CustomData::default(),
                     duration: None,
@@ -798,7 +798,7 @@ pub mod media {
                     name: None,
                     subtype: Some(TextTrackType::Subtitles),
                     track_content_id: Some(url.to_string()),
-                    track_content_type: Some(MimeType::from(MIME_TEXT_VTT)),
+                    track_content_type: Some(MimeType::TEXT_VTT),
                     track_id: None,
                     track_type: TrackType::Text,
                 }
@@ -1024,6 +1024,7 @@ pub mod media {
             pub media_session_id: MediaSessionId,
         }
 
+
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(transparent)]
         pub struct CustomData(pub serde_json::Value);
@@ -1077,6 +1078,7 @@ pub mod media {
             }
         }
 
+
         #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
         #[serde(transparent)]
         pub struct Seconds(pub f64);
@@ -1098,6 +1100,7 @@ pub mod media {
                 Duration::from_secs_f64(s.0)
             }
         }
+
 
         #[derive(Clone, Copy, Debug,
                  Hash, Eq, PartialEq, Ord, PartialOrd,
@@ -1136,6 +1139,7 @@ pub mod media {
                 Ok(ItemId::from(i32::from_str(s)?))
             }
         }
+
 
         #[derive(Clone, Copy, Debug,
                  Hash, Eq, PartialEq, Ord, PartialOrd,
@@ -1177,10 +1181,55 @@ pub mod media {
             }
         }
 
-        // TODO: Switch to newtype.
-        pub type MimeType = String;
-        pub const MIME_EMPTY: &str = "";
-        pub const MIME_TEXT_VTT: &str = "text/vtt";
+
+        #[derive(Clone, Debug, Hash,
+                 Eq, PartialEq, Ord, PartialOrd,
+                 Deserialize, Serialize)]
+        #[serde(transparent)]
+        pub struct MimeType(Cow<'static, str>);
+
+        impl MimeType {
+            pub const EMPTY: MimeType = MimeType::from_const("");
+            pub const TEXT_VTT: MimeType = MimeType::from_const("text/vtt");
+        }
+
+        impl MimeType {
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+
+            pub const fn from_const(s: &'static str) -> MimeType {
+                Self(Cow::Borrowed(s))
+            }
+
+            pub fn to_string(&self) -> String {
+                self.0.to_string()
+            }
+        }
+
+        impl From<&str> for MimeType {
+            fn from(s: &str) -> Self {
+                Self(Cow::Owned(s.to_string()))
+            }
+        }
+
+        impl From<String> for MimeType {
+            fn from(s: String) -> Self {
+                Self(s.into())
+            }
+        }
+
+        impl From<MimeType> for String {
+            fn from(m: MimeType) -> String {
+                m.0.into()
+            }
+        }
+
+        impl Display for MimeType {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                Display::fmt(&self.0, f)
+            }
+        }
     }
     pub use self::shared::*;
 
