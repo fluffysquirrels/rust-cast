@@ -15,9 +15,8 @@
 
 use anyhow::{bail, format_err};
 use crate::{
-    async_client::Result,
+    async_client::{self as client, Result},
     message::{EndpointId, Namespace},
-    types::AppSession,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -2101,8 +2100,8 @@ pub mod receiver {
             }
 
             pub fn to_app_session(&self, receiver_destination_id: EndpointId)
-            -> Result<AppSession> {
-                Ok(AppSession {
+            -> Result<client::AppSession> {
+                Ok(client::AppSession {
                     receiver_destination_id,
                     app_destination_id: self.transport_id.clone(),
                     app_session_id: self.app_session_id.clone(),

@@ -4,10 +4,9 @@ use csscolorparser::Color;
 use futures::StreamExt;
 use rust_cast::{
     self as lib,
-    async_client::{self as client, Client, Error, Result},
+    async_client::{self as client, Client, Error, MediaSession, Result},
     message::{EndpointId, Namespace},
     payload::{self, media::{CustomData, ItemId}},
-    types::{MediaSession},
     /* function_path, named, */
 };
 use tokio::{

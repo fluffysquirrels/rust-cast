@@ -11,10 +11,9 @@ use crate::{
     payload::{self, MessageType, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner,
               ResponseInner,
               media::{CustomData, MediaRequestCommon, MediaSessionId},
-              receiver::AppId },
-    types::{AppSession, /* AppSessionId, */
-            MediaSession },
-    util::{named},
+              receiver::{AppId, AppSessionId},
+    },
+    util::named,
 };
 use futures::{
     future::Either,
@@ -24,7 +23,7 @@ use futures::{
 use once_cell::sync::Lazy;
 use pin_project_lite::pin_project;
 use protobuf::Message;
-use serde::Serialize;
+    use serde::{Deserialize, Serialize};
 use std::{
     any::{self, Any},
     collections::{HashMap, HashSet},
@@ -237,6 +236,38 @@ pub struct ErrorStatus {
     // pub io_error_kind: Option<std::io::ErrorKind>,
 
     // pub connected: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq,
+         Deserialize, Serialize)]
+pub struct AppSession {
+    pub app_destination_id: EndpointId,
+    pub receiver_destination_id: EndpointId,
+
+    pub app_session_id: AppSessionId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq,
+         Deserialize, Serialize)]
+pub struct MediaSession {
+    #[serde(flatten)]
+    pub app_session: AppSession,
+
+    pub media_session_id: MediaSessionId,
+}
+
+impl MediaSession {
+    pub fn app_destination_id(&self) -> &EndpointId {
+        &self.app_session.app_destination_id
+    }
+
+    pub fn receiver_destination_id(&self) -> &EndpointId {
+        &self.app_session.receiver_destination_id
+    }
+
+    pub fn app_session_id(&self) -> &AppSessionId {
+        &self.app_session.app_session_id
+    }
 }
 
 #[derive(Clone, Debug)]

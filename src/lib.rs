@@ -11,4 +11,3 @@ pub mod cast;
 pub mod mdns;
 pub mod message;
 pub mod payload;
-pub mod types;
