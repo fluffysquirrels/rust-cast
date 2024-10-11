@@ -5,9 +5,9 @@ use futures::StreamExt;
 use rust_cast::{
     self as lib,
     async_client::{self as client, Client, Error, Result},
-    message::EndpointId,
+    message::{EndpointId, Namespace},
     payload::{self, media::{CustomData, ItemId}},
-    types::{MediaSession, NamespaceConst},
+    types::{MediaSession},
     /* function_path, named, */
 };
 use tokio::{
@@ -279,7 +279,7 @@ const COLOR_ARG_HELP: &str =
      See the `--help` for the 'media-edit-tracks-info' sub-command, or \
        https://docs.rs/csscolorparser";
 
-const MEDIA_NS: NamespaceConst = payload::media::CHANNEL_NAMESPACE;
+const MEDIA_NS: Namespace = payload::media::CHANNEL_NAMESPACE;
 
 const RECEIVER: EndpointId = EndpointId::DEFAULT_RECEIVER;
 
@@ -379,8 +379,7 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
                     // TODO: Support this optionally in Client?
                     if let client::StatusMessage::Receiver(status) = update.msg {
                         for media_app in
-                               status.receiver_status.applications.iter()
-                                     .filter(|app| app.has_namespace(MEDIA_NS))
+                            status.receiver_status.applications_with_namespace(MEDIA_NS)
                         {
                             client.connection_connect(media_app.transport_id.clone()).await?;
                         }
@@ -399,9 +398,7 @@ async fn status_single(client: &mut Client) -> Result<()> {
 
     print_receiver_status(&receiver_status);
 
-    for media_app in
-        receiver_status.applications.iter().filter(
-            |app| app.has_namespace(MEDIA_NS))
+    for media_app in receiver_status.applications_with_namespace(MEDIA_NS)
     {
         let app_session = media_app.to_app_session(RECEIVER)?;
         client.connection_connect(app_session.app_destination_id.clone()).await?;

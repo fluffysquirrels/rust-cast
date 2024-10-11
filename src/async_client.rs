@@ -6,15 +6,15 @@ use crate::{
         CastMessage,
         CastMessagePayload,
         EndpointId,
+        Namespace,
     },
-    payload::{self, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner, ResponseInner,
+    payload::{self, MessageType, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner,
+              ResponseInner,
               media::{CustomData, MediaRequestCommon},
               receiver::AppId },
     types::{AppSession, /* AppSessionId, */
             MediaSession, /* MediaSessionId, */
-            MediaSessionId,
-            /* MessageType, */ MessageTypeConst,
-            /* Namespace, */ NamespaceConst },
+            MediaSessionId},
     util::{named},
 };
 use futures::{
@@ -129,8 +129,8 @@ pin_project! {
 
 #[derive(Debug)]
 struct RequestState {
-    response_ns: NamespaceConst,
-    response_type_names: &'static [MessageTypeConst],
+    response_ns: Namespace,
+    response_type_names: &'static [MessageType],
     timeout_key: DelayKey,
 
     #[expect(dead_code)] // Just for debugging for now.
@@ -167,8 +167,8 @@ enum TaskCmdType {
 struct CastRpc {
     request_message: CastMessage,
     request_id: RequestId,
-    response_ns: NamespaceConst,
-    response_type_names: &'static [MessageTypeConst],
+    response_ns: Namespace,
+    response_type_names: &'static [MessageType],
 }
 
 #[derive(Debug)]
@@ -267,7 +267,7 @@ const STATUS_BROADCAST_CHANNEL_CAPACITY: usize = 16;
 
 const TASK_DELAY_QUEUE_CAPACITY: usize = 4;
 
-static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<NamespaceConst>>::new(|| {
+static JSON_NAMESPACES: Lazy<HashSet<Namespace>> = Lazy::<HashSet<Namespace>>::new(|| {
     HashSet::from([
         payload::connection::CHANNEL_NAMESPACE,
         payload::heartbeat::CHANNEL_NAMESPACE,
@@ -344,8 +344,8 @@ impl Client {
         let mut media_statuses = Vec::<(MediaSession, payload::media::StatusEntry)>
                                     ::with_capacity(1);
 
-        for media_app in receiver_status.applications.iter()
-                             .filter(|app| app.has_namespace(payload::media::CHANNEL_NAMESPACE))
+        for media_app in receiver_status.applications_with_namespace(
+                             payload::media::CHANNEL_NAMESPACE)
         {
             let app_session = media_app.to_app_session(receiver_id.clone())?;
 
@@ -475,8 +475,9 @@ impl Client {
         let receiver_status = self.receiver_status(destination_id.clone()).await?;
 
         let Some(media_app)
-            = receiver_status.applications.iter()
-                  .find(|app| app.has_namespace(payload::media::CHANNEL_NAMESPACE)) else
+            = receiver_status.applications_with_namespace(payload::media::CHANNEL_NAMESPACE)
+                             .next()
+        else
         {
             bail!("{METHOD_PATH}: No app with media namespace found.\n\
                    _ receiver_status = {receiver_status:#?}");
@@ -1013,7 +1014,7 @@ impl Client {
 
         // TODO: Why did I disable this?
         // Was it to try JSON deserialisation anyway to get better / different diagnostics?
-        if false && !expected_types.contains(&payload_dyn.typ.as_str()) {
+        if false && !expected_types.contains(&payload_dyn.typ) {
             bail!("Unexpected type in response payload\n\
                    request_id:     {rid:?}\n\
                    namespace:      {namespace:?}\n\
@@ -1063,7 +1064,7 @@ impl Client {
         let cmd_type = TaskCmdType::CastRpc(Box::new(CastRpc {
             request_message,
             request_id,
-            response_ns,
+            response_ns: response_ns.clone(),
             response_type_names,
         }));
 
@@ -1076,8 +1077,8 @@ impl Client {
                         ?start,
                         ?elapsed,
                         response_payload = ?resp,
-                        response_ns,
-                        response_type_name = resp.typ,
+                        %response_ns,
+                        response_type_name = %resp.typ,
                         expected_response_type_names = ?response_type_names,
                         request_id = request_id.inner(),
                         "json_rpc response");
@@ -1095,18 +1096,18 @@ impl Client {
         let request_id = self.take_request_id();
         let payload = Payload::<Req> {
             request_id: Some(request_id),
-            typ: Req::TYPE_NAME.to_string(),
+            typ: Req::TYPE_NAME,
             inner: req,
         };
 
         let sender = self.config().sender.clone();
-        let request_namespace = Req::CHANNEL_NAMESPACE.to_string();
+        let request_namespace = Req::CHANNEL_NAMESPACE;
 
         tracing::debug!(target: METHOD_PATH,
                         ?payload,
                         request_id = request_id.inner(),
-                        request_type = payload.typ,
-                        request_namespace,
+                        request_type = %payload.typ,
+                        %request_namespace,
                         %sender, %destination,
                         "payload struct");
 
@@ -1115,8 +1116,8 @@ impl Client {
         tracing::trace!(target: METHOD_PATH,
                         payload_json,
                         request_id = request_id.inner(),
-                        request_type = payload.typ,
-                        request_namespace,
+                        request_type = %payload.typ,
+                        %request_namespace,
                         %sender, %destination,
                         "payload json");
 
@@ -1491,7 +1492,7 @@ impl<S: TokioAsyncStream> Task<S> {
                         request_id = request_id.inner(),
                         command_id,
                         ?request_message,
-                        response_ns,
+                        %response_ns,
                         ?response_type_names,
                         "rpc send");
 
@@ -1501,7 +1502,7 @@ impl<S: TokioAsyncStream> Task<S> {
                            rpc = rpc_debug,
                            request_id = request_id.inner(),
                            command_id,
-                           response_ns,
+                           %response_ns,
                            ?response_type_names,
                            "send_raw error");
 
@@ -1601,10 +1602,10 @@ impl<S: TokioAsyncStream> Task<S> {
                         ?msg, ?msg_time,
                         "message read");
 
-        let msg_ns = msg.namespace.as_str();
+        let msg_ns = &msg.namespace;
         if !JSON_NAMESPACES.contains(msg_ns) {
             tracing::warn!(target: METHOD_PATH,
-                           msg_ns,
+                           %msg_ns,
                            ?msg,
                            "message namespace not known");
             return;
@@ -1613,7 +1614,7 @@ impl<S: TokioAsyncStream> Task<S> {
         let pd_json_str = match &msg.payload {
             CastMessagePayload::Binary(_b) => {
                 tracing::warn!(target: METHOD_PATH,
-                               msg_ns,
+                               %msg_ns,
                                ?msg,
                                "binary message not known");
                 return;
@@ -1653,13 +1654,13 @@ impl<S: TokioAsyncStream> Task<S> {
         tracing::trace!(target: METHOD_PATH,
                         ?pd,
                         "pd.request_id" = pd.request_id.map(|id| id.inner()),
-                        "pd.typ" = ?pd_type,
+                        "pd.typ" = %pd_type,
                         "message payload as PayloadDyn");
 
         let msg_is_broadcast = msg.destination.is_broadcast();
         if msg_is_broadcast {
             tracing::debug!(target: METHOD_PATH,
-                            ?msg, ?pd, pd_type,
+                            ?msg, ?pd, %pd_type,
                             "broadcast message");
             // TODO: return to client through channel?
         }
@@ -1669,11 +1670,11 @@ impl<S: TokioAsyncStream> Task<S> {
         // # Special message cases
 
         // Channel close
-        if msg_ns == payload::connection::CHANNEL_NAMESPACE
+        if *msg_ns == payload::connection::CHANNEL_NAMESPACE
             && pd.typ == payload::connection::MESSAGE_TYPE_CLOSE
         {
             tracing::debug!(target: METHOD_PATH,
-                            ?msg, ?pd, pd_type,
+                            ?msg, ?pd, %pd_type,
                             "Connection closed message from destination.\n\n\
                              This may mean we were never connected to the destination \
                              (try calling method Client::connection_connect()) or \
@@ -1682,7 +1683,7 @@ impl<S: TokioAsyncStream> Task<S> {
         }
 
         // Heartbeat ping from remote; reply with a pong.
-        if msg_ns == payload::heartbeat::CHANNEL_NAMESPACE
+        if *msg_ns == payload::heartbeat::CHANNEL_NAMESPACE
             && pd.typ == payload::heartbeat::MESSAGE_TYPE_PING
         {
             self.handle_read_ping(msg.source).await;
@@ -1690,7 +1691,7 @@ impl<S: TokioAsyncStream> Task<S> {
         }
 
         // Heartbeat pong reply from remote; no further action.
-        if msg_ns == payload::heartbeat::CHANNEL_NAMESPACE
+        if *msg_ns == payload::heartbeat::CHANNEL_NAMESPACE
             && pd.typ == payload::heartbeat::MESSAGE_TYPE_PONG
         {
             tracing::debug!(target: METHOD_PATH,
@@ -1700,14 +1701,14 @@ impl<S: TokioAsyncStream> Task<S> {
         }
 
         // Receiver status from remote; try to publish update to listeners.
-        if msg_ns == payload::receiver::CHANNEL_NAMESPACE
+        if *msg_ns == payload::receiver::CHANNEL_NAMESPACE
             && pd.typ == payload::receiver::MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS
         {
             self.publish_receiver_status(&msg, &pd, msg_time);
         }
 
         // Media namespace status from remote; try to publish update to listeners.
-        if msg_ns == payload::media::CHANNEL_NAMESPACE
+        if *msg_ns == payload::media::CHANNEL_NAMESPACE
             && pd.typ == payload::media::MESSAGE_RESPONSE_TYPE_MEDIA_STATUS
         {
             self.publish_media_status(&msg, &pd, msg_time);
@@ -1720,7 +1721,7 @@ impl<S: TokioAsyncStream> Task<S> {
                 }
 
                 tracing::warn!(target: METHOD_PATH,
-                               ?msg, ?pd, pd_type,
+                               ?msg, ?pd, %pd_type,
                                "missing request_id in unicast message payload");
                 return;
             },
@@ -1738,7 +1739,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
             tracing::warn!(target: METHOD_PATH,
                            request_id = request_id.inner(),
-                           ?msg, ?pd, pd_type,
+                           ?msg, ?pd, %pd_type,
                            "missing request state");
             return;
         };
@@ -1746,12 +1747,12 @@ impl<S: TokioAsyncStream> Task<S> {
         if proj.timeout_queue.as_mut().try_remove(&request_state.timeout_key).is_none() {
             tracing::warn!(target: METHOD_PATH,
                            ?request_state,
-                           ?msg, ?pd, pd_type,
+                           ?msg, ?pd, %pd_type,
                            "timeout_queue missing expected delay key");
         }
 
         let result: Result<PayloadDyn> =
-            if request_state.response_ns != msg_ns {
+            if request_state.response_ns != *msg_ns {
                 Err(format_err!(
                     "{METHOD_PATH}: received reply message with unexpected namespace:\n\
                      _ request_id    = {request_id}\n\
@@ -1763,7 +1764,7 @@ impl<S: TokioAsyncStream> Task<S> {
 
                 // TODO: Is this still useful? Why did I disable this?
                 //       This will fail to deserialise in `Client` I think?
-            } else if false && !request_state.response_type_names.contains(&pd.typ.as_str()) {
+            } else if false && !request_state.response_type_names.contains(&pd.typ) {
                 Err(format_err!(
                     "{METHOD_PATH}: received reply message with unexpected type:\n\
                      _ request_id     = {request_id}\n\
@@ -2089,7 +2090,7 @@ impl codec::Encoder<CastMessage> for CastMessageCodec {
 
         proto_msg.set_protocol_version(ProtocolVersion::CASTV2_1_0);
 
-        proto_msg.set_namespace(msg.namespace);
+        proto_msg.set_namespace(msg.namespace.into());
         proto_msg.set_source_id(msg.source.into());
         proto_msg.set_destination_id(msg.destination.into());
 
@@ -2169,7 +2170,7 @@ impl codec::Decoder for CastMessageCodec {
         use crate::cast::cast_channel::cast_message::PayloadType;
 
         let msg = CastMessage {
-            namespace: proto_msg.take_namespace(),
+            namespace: proto_msg.take_namespace().into(),
             source: proto_msg.take_source_id().into(),
             destination: proto_msg.take_destination_id().into(),
             payload: match proto_msg.payload_type() {

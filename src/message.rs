@@ -1,4 +1,3 @@
-use crate::types::{Namespace};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -6,10 +5,17 @@ use std::{
 };
 
 
-#[derive(Clone, Debug, Eq, PartialEq,
+#[derive(Clone, Debug, Hash,
+         Eq, PartialEq, Ord, PartialOrd,
          Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct EndpointId(Cow<'static, str>);
+
+#[derive(Clone, Debug, Hash,
+         Eq, PartialEq, Ord, PartialOrd,
+         Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct Namespace(Cow<'static, str>);
 
 #[derive(Clone)]
 pub enum CastMessagePayload {
@@ -107,6 +113,44 @@ impl From<EndpointId> for String {
 }
 
 impl Display for EndpointId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
+impl Namespace {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub const fn from_const(s: &'static str) -> Namespace {
+        Self(Cow::Borrowed(s))
+    }
+
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+impl From<&str> for Namespace {
+    fn from(s: &str) -> Self {
+        Self(Cow::Owned(s.to_string()))
+    }
+}
+
+impl From<String> for Namespace {
+    fn from(s: String) -> Self {
+        Self(s.into())
+    }
+}
+
+impl From<Namespace> for String {
+    fn from(id: Namespace) -> String {
+        id.0.into()
+    }
+}
+
+impl Display for Namespace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         Display::fmt(&self.0, f)
     }

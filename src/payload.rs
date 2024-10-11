@@ -16,16 +16,14 @@
 use anyhow::{bail, format_err};
 use crate::{
     async_client::Result,
-    message::EndpointId,
+    message::{EndpointId, Namespace},
     types::{AppSession,
-            MediaSessionId,
-            MessageType, MessageTypeConst,
-            NamespaceConst},
+            MediaSessionId },
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     fmt::{self, Debug, Display},
     str::FromStr,
     sync::atomic::{AtomicI32, Ordering},
@@ -42,6 +40,12 @@ pub use csscolorparser::Color;
 pub struct RequestId(i32);
 
 pub(crate) struct RequestIdGen(AtomicI32);
+
+#[derive(Clone, Debug,
+        Hash, Eq, PartialEq, Ord, PartialOrd,
+        Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct MessageType(Cow<'static, str>);
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,14 +64,14 @@ pub type PayloadDyn = Payload<serde_json::Value>;
 
 pub trait RequestInner: Debug + Serialize
 {
-    const CHANNEL_NAMESPACE: NamespaceConst;
-    const TYPE_NAME: MessageTypeConst;
+    const CHANNEL_NAMESPACE: Namespace;
+    const TYPE_NAME: MessageType;
 }
 
 pub trait ResponseInner: Debug + DeserializeOwned
 {
-    const CHANNEL_NAMESPACE: NamespaceConst;
-    const TYPE_NAMES: &'static [MessageTypeConst];
+    const CHANNEL_NAMESPACE: Namespace;
+    const TYPE_NAMES: &'static [MessageType];
 }
 
 // TODO: Update USER_AGENT?
@@ -134,13 +138,53 @@ impl RequestIdGen {
     }
 }
 
+impl MessageType {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub const fn from_const(s: &'static str) -> MessageType {
+        Self(Cow::Borrowed(s))
+    }
+
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+impl From<&str> for MessageType {
+    fn from(s: &str) -> Self {
+        Self(Cow::Owned(s.to_string()))
+    }
+}
+
+impl From<String> for MessageType {
+    fn from(s: String) -> Self {
+        Self(s.into())
+    }
+}
+
+impl From<MessageType> for String {
+    fn from(id: MessageType) -> String {
+        id.0.into()
+    }
+}
+
+impl Display for MessageType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
+
 pub mod connection {
     use super::*;
 
-    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.connection";
+    pub const CHANNEL_NAMESPACE: Namespace =
+        Namespace::from_const("urn:x-cast:com.google.cast.tp.connection");
 
-    pub const MESSAGE_TYPE_CONNECT: MessageTypeConst = "CONNECT";
-    pub const MESSAGE_TYPE_CLOSE: MessageTypeConst = "CLOSE";
+    pub const MESSAGE_TYPE_CONNECT: MessageType = MessageType::from_const("CONNECT");
+    pub const MESSAGE_TYPE_CLOSE: MessageType = MessageType::from_const("CLOSE");
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -149,8 +193,8 @@ pub mod connection {
     }
 
     impl RequestInner for ConnectRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_CONNECT;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_TYPE_CONNECT;
     }
 
     #[derive(Debug, Deserialize)]
@@ -158,26 +202,27 @@ pub mod connection {
     pub struct ConnectResponse {}
 
     impl ResponseInner for ConnectResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[MESSAGE_TYPE_CONNECT];
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[MESSAGE_TYPE_CONNECT];
     }
 }
 
 pub mod heartbeat {
     use super::*;
 
-    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.tp.heartbeat";
+    pub const CHANNEL_NAMESPACE: Namespace =
+        Namespace::from_const("urn:x-cast:com.google.cast.tp.heartbeat");
 
-    pub const MESSAGE_TYPE_PING: MessageTypeConst = "PING";
-    pub const MESSAGE_TYPE_PONG: MessageTypeConst = "PONG";
+    pub const MESSAGE_TYPE_PING: MessageType = MessageType::from_const("PING");
+    pub const MESSAGE_TYPE_PONG: MessageType = MessageType::from_const("PONG");
 
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Ping {}
 
     impl RequestInner for Ping {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PING;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_TYPE_PING;
     }
 
     #[derive(Debug, Serialize)]
@@ -185,8 +230,8 @@ pub mod heartbeat {
     pub struct Pong {}
 
     impl RequestInner for Pong {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_TYPE_PONG;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_TYPE_PONG;
     }
 }
 
@@ -197,43 +242,44 @@ pub mod media {
     use crate::payload::receiver::AppSessionId;
     use super::*;
 
-    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.media";
+    pub const CHANNEL_NAMESPACE: Namespace =
+        Namespace::from_const("urn:x-cast:com.google.cast.media");
 
-    pub const MESSAGE_REQUEST_TYPE_GET_STATUS: MessageTypeConst = "GET_STATUS";
-    pub const MESSAGE_REQUEST_TYPE_LOAD: MessageTypeConst = "LOAD";
-    pub const MESSAGE_REQUEST_TYPE_PLAY: MessageTypeConst = "PLAY";
-    pub const MESSAGE_REQUEST_TYPE_PAUSE: MessageTypeConst = "PAUSE";
-    pub const MESSAGE_REQUEST_TYPE_STOP: MessageTypeConst = "STOP";
-    pub const MESSAGE_REQUEST_TYPE_SEEK: MessageTypeConst = "SEEK";
-    pub const MESSAGE_REQUEST_TYPE_EDIT_TRACKS_INFO: MessageTypeConst = "EDIT_TRACKS_INFO";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS: MessageTypeConst = "QUEUE_GET_ITEM_IDS";
-    pub const _MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_RANGE: MessageTypeConst
-        = "QUEUE_GET_ITEM_RANGE";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageTypeConst = "QUEUE_GET_ITEMS";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_INSERT: MessageTypeConst = "QUEUE_INSERT";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_LOAD: MessageTypeConst = "QUEUE_LOAD";
+    pub const MESSAGE_REQUEST_TYPE_GET_STATUS: MessageType = MessageType::from_const("GET_STATUS");
+    pub const MESSAGE_REQUEST_TYPE_LOAD: MessageType = MessageType::from_const("LOAD");
+    pub const MESSAGE_REQUEST_TYPE_PLAY: MessageType = MessageType::from_const("PLAY");
+    pub const MESSAGE_REQUEST_TYPE_PAUSE: MessageType = MessageType::from_const("PAUSE");
+    pub const MESSAGE_REQUEST_TYPE_STOP: MessageType = MessageType::from_const("STOP");
+    pub const MESSAGE_REQUEST_TYPE_SEEK: MessageType = MessageType::from_const("SEEK");
+    pub const MESSAGE_REQUEST_TYPE_EDIT_TRACKS_INFO: MessageType = MessageType::from_const("EDIT_TRACKS_INFO");
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS: MessageType = MessageType::from_const("QUEUE_GET_ITEM_IDS");
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_RANGE: MessageType
+        = MessageType::from_const("QUEUE_GET_ITEM_RANGE");
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS: MessageType = MessageType::from_const("QUEUE_GET_ITEMS");
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_INSERT: MessageType = MessageType::from_const("QUEUE_INSERT");
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_LOAD: MessageType = MessageType::from_const("QUEUE_LOAD");
 
     // Already supported by `QUEUE_UPDATE` with QueueUpdateRequestArgs::next()
-    pub const _MESSAGE_REQUEST_TYPE_QUEUE_NEXT: MessageTypeConst = "QUEUE_NEXT";
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_NEXT: MessageType = MessageType::from_const("QUEUE_NEXT");
 
     // Already supported by `QUEUE_UPDATE` with QueueUpdateRequestArgs::prev()
-    pub const _MESSAGE_REQUEST_TYPE_QUEUE_PREV: MessageTypeConst = "QUEUE_PREV";
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_PREV: MessageType = MessageType::from_const("QUEUE_PREV");
 
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_REMOVE: MessageTypeConst = "QUEUE_REMOVE";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_REORDER: MessageTypeConst = "QUEUE_REORDER";
-    pub const _MESSAGE_REQUEST_TYPE_QUEUE_SHUFFLE: MessageTypeConst = "QUEUE_SHUFFLE";
-    pub const MESSAGE_REQUEST_TYPE_QUEUE_UPDATE: MessageTypeConst = "QUEUE_UPDATE";
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_REMOVE: MessageType = MessageType::from_const("QUEUE_REMOVE");
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_REORDER: MessageType = MessageType::from_const("QUEUE_REORDER");
+    pub const _MESSAGE_REQUEST_TYPE_QUEUE_SHUFFLE: MessageType = MessageType::from_const("QUEUE_SHUFFLE");
+    pub const MESSAGE_REQUEST_TYPE_QUEUE_UPDATE: MessageType = MessageType::from_const("QUEUE_UPDATE");
 
-    pub const MESSAGE_REQUEST_TYPE_SET_PLAYBACK_RATE: MessageTypeConst = "SET_PLAYBACK_RATE";
+    pub const MESSAGE_REQUEST_TYPE_SET_PLAYBACK_RATE: MessageType = MessageType::from_const("SET_PLAYBACK_RATE");
 
-    pub const MESSAGE_RESPONSE_TYPE_MEDIA_STATUS: MessageTypeConst = "MEDIA_STATUS";
-    pub const MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED: MessageTypeConst = "LOAD_CANCELLED";
-    pub const MESSAGE_RESPONSE_TYPE_LOAD_FAILED: MessageTypeConst = "LOAD_FAILED";
-    pub const MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE: MessageTypeConst
-        = "INVALID_PLAYER_STATE";
-    pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageTypeConst = "INVALID_REQUEST";
-    pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEM_IDS: MessageTypeConst = "QUEUE_ITEM_IDS";
-    pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEMS: MessageTypeConst = "QUEUE_ITEMS";
+    pub const MESSAGE_RESPONSE_TYPE_MEDIA_STATUS: MessageType = MessageType::from_const("MEDIA_STATUS");
+    pub const MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED: MessageType = MessageType::from_const("LOAD_CANCELLED");
+    pub const MESSAGE_RESPONSE_TYPE_LOAD_FAILED: MessageType = MessageType::from_const("LOAD_FAILED");
+    pub const MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE: MessageType
+        = MessageType::from_const("INVALID_PLAYER_STATE");
+    pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageType = MessageType::from_const("INVALID_REQUEST");
+    pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEM_IDS: MessageType = MessageType::from_const("QUEUE_ITEM_IDS");
+    pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEMS: MessageType = MessageType::from_const("QUEUE_ITEMS");
 
     mod shared {
         use super::*;
@@ -1127,8 +1173,8 @@ pub mod media {
             pub struct $name(pub MediaRequestCommon);
 
             impl RequestInner for $name {
-                const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-                const TYPE_NAME: MessageTypeConst = $msg_type_name;
+                const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+                const TYPE_NAME: MessageType = $msg_type_name;
             }
         };
     }
@@ -1163,8 +1209,8 @@ pub mod media {
     }
 
     impl RequestInner for LoadRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_LOAD;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_LOAD;
     }
 
     impl LoadRequestArgs {
@@ -1202,8 +1248,8 @@ pub mod media {
     }
 
     impl ResponseInner for LoadResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[
             MESSAGE_RESPONSE_TYPE_MEDIA_STATUS,
             MESSAGE_RESPONSE_TYPE_LOAD_CANCELLED,
             MESSAGE_RESPONSE_TYPE_LOAD_FAILED,
@@ -1232,8 +1278,8 @@ pub mod media {
     }
 
     impl RequestInner for EditTracksInfoRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_EDIT_TRACKS_INFO;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_EDIT_TRACKS_INFO;
     }
 
 
@@ -1245,8 +1291,8 @@ pub mod media {
     }
 
     impl RequestInner for GetStatusRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_GET_STATUS;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_GET_STATUS;
     }
 
     #[derive(Debug, Deserialize)]
@@ -1264,8 +1310,8 @@ pub mod media {
     }
 
     impl ResponseInner for GetStatusResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[
             MESSAGE_RESPONSE_TYPE_MEDIA_STATUS,
             MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
@@ -1295,8 +1341,8 @@ pub mod media {
     }
 
     impl RequestInner for QueueGetItemsRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEMS;
     }
 
     #[derive(Debug, Deserialize)]
@@ -1306,8 +1352,8 @@ pub mod media {
     }
 
     impl ResponseInner for QueueGetItemsResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[
             MESSAGE_RESPONSE_TYPE_QUEUE_ITEMS,
         ];
     }
@@ -1332,8 +1378,8 @@ pub mod media {
     }
 
     impl ResponseInner for QueueGetItemIdsResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[
             MESSAGE_RESPONSE_TYPE_QUEUE_ITEM_IDS,
             MESSAGE_RESPONSE_TYPE_INVALID_PLAYER_STATE,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
@@ -1378,8 +1424,8 @@ pub mod media {
     }
 
     impl RequestInner for QueueInsertRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_INSERT;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_QUEUE_INSERT;
     }
 
     impl QueueInsertRequestArgs {
@@ -1422,8 +1468,8 @@ pub mod media {
     }
 
     impl RequestInner for QueueLoadRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_LOAD;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_QUEUE_LOAD;
     }
 
     impl QueueLoadRequestArgs {
@@ -1462,8 +1508,8 @@ pub mod media {
     }
 
     impl RequestInner for QueueRemoveRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_REMOVE;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_QUEUE_REMOVE;
     }
 
 
@@ -1496,8 +1542,8 @@ pub mod media {
     }
 
     impl RequestInner for QueueReorderRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_REORDER;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_QUEUE_REORDER;
     }
 
 
@@ -1530,8 +1576,8 @@ pub mod media {
     }
 
     impl RequestInner for QueueUpdateRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_QUEUE_UPDATE;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_QUEUE_UPDATE;
     }
 
     impl QueueUpdateRequestArgs {
@@ -1591,8 +1637,8 @@ pub mod media {
     }
 
     impl RequestInner for SeekRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_SEEK;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_SEEK;
     }
 
     #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -1630,8 +1676,8 @@ pub mod media {
     }
 
     impl RequestInner for SetPlaybackRateRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_SET_PLAYBACK_RATE;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_SET_PLAYBACK_RATE;
     }
 
 
@@ -1895,18 +1941,17 @@ pub mod media {
 pub mod receiver {
     use super::*;
 
-    pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.receiver";
-    pub const CHANNEL_NAMESPACE_TYPED: AppNamespace =
-        AppNamespace::from_const("urn:x-cast:com.google.cast.receiver");
+    pub const CHANNEL_NAMESPACE: Namespace =
+        Namespace::from_const("urn:x-cast:com.google.cast.receiver");
 
-    pub const MESSAGE_REQUEST_TYPE_LAUNCH: &str = "LAUNCH";
-    pub const MESSAGE_REQUEST_TYPE_STOP: &str = "STOP";
-    pub const MESSAGE_REQUEST_TYPE_GET_STATUS: &str = "GET_STATUS";
-    pub const MESSAGE_REQUEST_TYPE_SET_VOLUME: &str = "SET_VOLUME";
+    pub const MESSAGE_REQUEST_TYPE_LAUNCH: MessageType = MessageType::from_const("LAUNCH");
+    pub const MESSAGE_REQUEST_TYPE_STOP: MessageType = MessageType::from_const("STOP");
+    pub const MESSAGE_REQUEST_TYPE_GET_STATUS: MessageType = MessageType::from_const("GET_STATUS");
+    pub const MESSAGE_REQUEST_TYPE_SET_VOLUME: MessageType = MessageType::from_const("SET_VOLUME");
 
-    pub const MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS: &str = "RECEIVER_STATUS";
-    pub const MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR: &str = "LAUNCH_ERROR";
-    pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: &str = "INVALID_REQUEST";
+    pub const MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS: MessageType = MessageType::from_const("RECEIVER_STATUS");
+    pub const MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR: MessageType = MessageType::from_const("LAUNCH_ERROR");
+    pub const MESSAGE_RESPONSE_TYPE_INVALID_REQUEST: MessageType = MessageType::from_const("INVALID_REQUEST");
 
     mod shared {
         use super::*;
@@ -1990,6 +2035,14 @@ pub mod receiver {
             // pub user_eq: ??,
         }
 
+        impl Status {
+            pub fn applications_with_namespace(&self, ns: impl Into<Namespace>)
+            -> impl Iterator<Item = &Application> {
+                let ns = ns.into();
+                self.applications.iter().filter(move |app| app.has_namespace(&ns))
+            }
+        }
+
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct Application {
@@ -2011,7 +2064,8 @@ pub mod receiver {
         }
 
         impl Application {
-            pub fn has_namespace(&self, ns: &str) -> bool {
+            pub fn has_namespace(&self, ns: impl Borrow<Namespace>) -> bool {
+                let ns = ns.borrow();
                 self.namespaces.iter().any(|app_ns| app_ns == ns)
             }
 
@@ -2028,38 +2082,18 @@ pub mod receiver {
         #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
         #[serde(rename_all = "camelCase")]
         pub struct AppNamespace {
-            pub name: Cow<'static, str>,
+            pub name: Namespace,
         }
 
-        impl AppNamespace {
-            pub const fn from_const(s: &'static str) -> AppNamespace {
-                AppNamespace {
-                    name: Cow::Borrowed(s),
-                }
+        impl PartialEq<Namespace> for AppNamespace {
+            fn eq(&self, rhs: &Namespace) -> bool {
+                self.name.eq(rhs)
             }
         }
 
-        impl From<&str> for AppNamespace {
-            fn from(s: &str) -> AppNamespace {
-                AppNamespace::from(s.to_string())
-            }
-        }
-
-        impl From<String> for AppNamespace {
-            fn from(s: String) -> AppNamespace {
-                AppNamespace { name: s.into() }
-            }
-        }
-
-        impl PartialEq<str> for AppNamespace {
-            fn eq(&self, other: &str) -> bool {
-                self.name == other
-            }
-        }
-
-        impl PartialEq<AppNamespace> for str {
-            fn eq(&self, other: &AppNamespace) -> bool {
-                self == other.name
+        impl PartialEq<AppNamespace> for Namespace {
+            fn eq(&self, rhs: &AppNamespace) -> bool {
+                rhs.eq(self)
             }
         }
 
@@ -2147,8 +2181,8 @@ pub mod receiver {
     pub struct GetStatusRequest {}
 
     impl RequestInner for GetStatusRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_GET_STATUS;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_GET_STATUS;
     }
 
     #[derive(Debug, Deserialize)]
@@ -2156,8 +2190,8 @@ pub mod receiver {
     pub struct GetStatusResponse(pub StatusWrapper);
 
     impl ResponseInner for GetStatusResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS];
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS];
     }
 
 
@@ -2170,8 +2204,8 @@ pub mod receiver {
     }
 
     impl RequestInner for LaunchRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_LAUNCH;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_LAUNCH;
     }
 
     #[derive(Debug, Deserialize)]
@@ -2193,8 +2227,8 @@ pub mod receiver {
     }
 
     impl ResponseInner for LaunchResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
             MESSAGE_RESPONSE_TYPE_LAUNCH_ERROR,
             MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS,
@@ -2211,8 +2245,8 @@ pub mod receiver {
     }
 
     impl RequestInner for StopRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_STOP;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_STOP;
     }
 
     #[derive(Debug, Deserialize)]
@@ -2229,8 +2263,8 @@ pub mod receiver {
     }
 
     impl ResponseInner for StopResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[
             MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
@@ -2245,8 +2279,8 @@ pub mod receiver {
     }
 
     impl RequestInner for SetVolumeRequest {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAME: MessageTypeConst = MESSAGE_REQUEST_TYPE_SET_VOLUME;
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_SET_VOLUME;
     }
 
     #[derive(Debug, Deserialize)]
@@ -2263,8 +2297,8 @@ pub mod receiver {
     }
 
     impl ResponseInner for SetVolumeResponse {
-        const CHANNEL_NAMESPACE: NamespaceConst = CHANNEL_NAMESPACE;
-        const TYPE_NAMES: &'static [MessageTypeConst] = &[
+        const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
+        const TYPE_NAMES: &'static [MessageType] = &[
             MESSAGE_RESPONSE_TYPE_RECEIVER_STATUS,
             MESSAGE_RESPONSE_TYPE_INVALID_REQUEST,
         ];
