@@ -17,7 +17,7 @@ use anyhow::{bail, format_err};
 use crate::{
     async_client::Result,
     message::EndpointId,
-    types::{AppId, AppSession,
+    types::{AppSession,
             MediaSessionId,
             MessageType, MessageTypeConst,
             NamespaceConst},
@@ -1910,6 +1910,60 @@ pub mod receiver {
 
     mod shared {
         use super::*;
+
+
+        #[derive(Clone, Debug, Eq, PartialEq,
+                 Deserialize, Serialize)]
+        #[serde(transparent)]
+        pub struct AppId(Cow<'static, str>);
+
+        /// Well known cast receiver app IDs
+        impl AppId {
+            pub const DEFAULT_MEDIA_RECEIVER: AppId = AppId::from_const("CC1AD845");
+            pub const BACKDROP: AppId = AppId::from_const("E8C28D3C");
+            pub const NETFLIX: AppId = AppId::from_const("CA5E8412");
+            pub const SPOTIFY: AppId = AppId::from_const("CC32E753");
+            pub const YOUTUBE: AppId = AppId::from_const("233637DE");
+        }
+
+        impl AppId {
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+
+            pub const fn from_const(s: &'static str) -> AppId {
+                Self(Cow::Borrowed(s))
+            }
+
+            pub fn to_string(&self) -> String {
+                self.0.to_string()
+            }
+        }
+
+        impl From<&str> for AppId {
+            fn from(s: &str) -> Self {
+                Self(Cow::Owned(s.to_string()))
+            }
+        }
+
+        impl From<String> for AppId {
+            fn from(s: String) -> Self {
+                Self(s.into())
+            }
+        }
+
+        impl From<AppId> for String {
+            fn from(id: AppId) -> String {
+                id.0.into()
+            }
+        }
+
+        impl Display for AppId {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                Display::fmt(&self.0, f)
+            }
+        }
+
 
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]

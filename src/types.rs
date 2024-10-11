@@ -12,9 +12,6 @@ pub type NamespaceConst = &'static str;
 pub type MessageType = String;
 pub type MessageTypeConst = &'static str;
 
-pub type AppId = String;
-pub type AppIdConst = &'static str;
-
 /// Unique ID for the playback of an item in this app session.
 /// This ID is set by the receiver at LOAD.
 pub type MediaSessionId = i32;

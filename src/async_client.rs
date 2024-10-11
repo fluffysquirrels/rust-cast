@@ -9,9 +9,8 @@ use crate::{
     },
     payload::{self, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner, ResponseInner,
               media::{CustomData, MediaRequestCommon},
-              /* receiver::AppSessionId */},
-    types::{AppId, /* AppIdConst, */
-            AppSession, /* AppSessionId, */
+              receiver::AppId },
+    types::{AppSession, /* AppSessionId, */
             MediaSession, /* MediaSessionId, */
             MediaSessionId,
             /* MessageType, */ MessageTypeConst,
@@ -277,18 +276,6 @@ static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<Namespace
     ])
 });
 
-/// Well known cast receiver app IDs
-// TODO: Move to payload::receiver.
-pub mod app {
-    use crate::types::AppIdConst;
-
-    pub const DEFAULT_MEDIA_RECEIVER: AppIdConst = "CC1AD845";
-    pub const BACKDROP: AppIdConst = "E8C28D3C";
-    pub const NETFLIX: AppIdConst = "CA5E8412";
-    pub const SPOTIFY: AppIdConst = "CC32E753";
-    pub const YOUTUBE: AppIdConst = "233637DE";
-}
-
 pub const DEFAULT_PORT: u16 = 8009;
 
 impl Config {
@@ -517,7 +504,7 @@ impl Client {
 
         let Some(media_app)
             = receiver_status.applications.iter()
-                  .find(|app| app.app_id == app::DEFAULT_MEDIA_RECEIVER) else
+                  .find(|app| app.app_id == AppId::DEFAULT_MEDIA_RECEIVER) else
         {
             bail!("{METHOD_PATH}: No default media app found.\n\
                    _ receiver_status = {receiver_status:#?}");
@@ -541,7 +528,7 @@ impl Client {
         let receiver_status = self.receiver_status(destination_id.clone()).await?;
 
         let app_session = match receiver_status.applications.iter()
-                                  .find(|app| app.app_id == app::DEFAULT_MEDIA_RECEIVER)
+                                  .find(|app| app.app_id == AppId::DEFAULT_MEDIA_RECEIVER)
         {
             Some(app) => {
                 let app_session = app.to_app_session(destination_id)?;
@@ -575,7 +562,7 @@ impl Client {
     pub async fn media_launch_default(&mut self, destination_id: EndpointId)
     -> Result<(AppSession, payload::receiver::Status)> {
         let (app, status) = self.receiver_launch_app(destination_id.clone(),
-                                                     app::DEFAULT_MEDIA_RECEIVER.into()).await?;
+                                                     AppId::DEFAULT_MEDIA_RECEIVER).await?;
         let app_session = app.to_app_session(destination_id)?;
         self.connection_connect(app_session.app_destination_id.clone()).await?;
 
