@@ -1,5 +1,15 @@
-use crate::types::{AppId, Namespace};
-use std::fmt::Debug;
+use crate::types::{Namespace};
+use serde::{Deserialize, Serialize};
+use std::{
+    borrow::Cow,
+    fmt::{self, Debug, Display},
+};
+
+
+#[derive(Clone, Debug, Eq, PartialEq,
+         Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct EndpointId(Cow<'static, str>);
 
 #[derive(Clone)]
 pub enum CastMessagePayload {
@@ -15,10 +25,10 @@ pub struct CastMessage {
     pub namespace: Namespace,
 
     /// Unique identifier of the `sender` application.
-    pub source: AppId,
+    pub source: EndpointId,
 
     /// Unique identifier of the `receiver` application.
-    pub destination: AppId,
+    pub destination: EndpointId,
 
     /// Payload data attached to the message (either string or binary).
     pub payload: CastMessagePayload,
@@ -52,5 +62,52 @@ impl Debug for CastMessagePayload {
         }
 
         Ok(())
+    }
+}
+
+impl EndpointId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_broadcast(&self) -> bool {
+        self.0 == Self::BROADCAST.0
+    }
+
+    pub const fn from_const(s: &'static str) -> EndpointId {
+        Self(Cow::Borrowed(s))
+    }
+
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+
+    pub const BROADCAST: EndpointId = EndpointId::from_const("*");
+
+    pub const DEFAULT_SENDER: EndpointId = EndpointId::from_const("sender-0");
+    pub const DEFAULT_RECEIVER: EndpointId = EndpointId::from_const("receiver-0");
+}
+
+impl From<&str> for EndpointId {
+    fn from(s: &str) -> Self {
+        Self(Cow::Owned(s.to_string()))
+    }
+}
+
+impl From<String> for EndpointId {
+    fn from(s: String) -> Self {
+        Self(s.into())
+    }
+}
+
+impl From<EndpointId> for String {
+    fn from(id: EndpointId) -> String {
+        id.0.into()
+    }
+}
+
+impl Display for EndpointId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        Display::fmt(&self.0, f)
     }
 }

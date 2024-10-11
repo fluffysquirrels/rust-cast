@@ -5,12 +5,13 @@ use crate::{
     message::{
         CastMessage,
         CastMessagePayload,
+        EndpointId,
     },
     payload::{self, Payload, PayloadDyn, RequestId, RequestIdGen, RequestInner, ResponseInner,
-              media::{CustomData, MediaRequestCommon}},
+              media::{CustomData, MediaRequestCommon},
+              /* receiver::AppSessionId */},
     types::{AppId, /* AppIdConst, */
             AppSession, /* AppSessionId, */
-            EndpointId, EndpointIdConst, ENDPOINT_BROADCAST,
             MediaSession, /* MediaSessionId, */
             MediaSessionId,
             /* MessageType, */ MessageTypeConst,
@@ -133,7 +134,7 @@ struct RequestState {
     response_type_names: &'static [MessageTypeConst],
     timeout_key: DelayKey,
 
-    #[allow(dead_code)] // Just for debugging for now.
+    #[expect(dead_code)] // Just for debugging for now.
     deadline: tokio::time::Instant,
 
     result_sender: TaskCmdResultSender,
@@ -242,13 +243,13 @@ pub struct ErrorStatus {
 
 #[derive(Clone, Debug)]
 pub struct ReceiverStatusMessage {
-    pub receiver_id: AppId,
+    pub receiver_id: EndpointId,
     pub receiver_status: payload::receiver::Status,
 }
 
 #[derive(Clone, Debug)]
 pub struct MediaStatusMessage {
-    pub app_destination_id: AppId,
+    pub app_destination_id: EndpointId,
     pub media_status: payload::media::Status,
 }
 
@@ -276,9 +277,6 @@ static JSON_NAMESPACES: Lazy<HashSet<NamespaceConst>> = Lazy::<HashSet<Namespace
     ])
 });
 
-pub const DEFAULT_SENDER_ID: EndpointIdConst = "sender-0";
-pub const DEFAULT_RECEIVER_ID: EndpointIdConst = "receiver-0";
-
 /// Well known cast receiver app IDs
 // TODO: Move to payload::receiver.
 pub mod app {
@@ -298,7 +296,7 @@ impl Config {
         Config {
             addr,
 
-            sender: DEFAULT_SENDER_ID.to_string(),
+            sender: EndpointId::DEFAULT_SENDER,
             local_task_command_timeout: Duration::from_secs(1),
             rpc_timeout: Duration::from_secs(5),
             load_timeout: Duration::from_secs(10),
@@ -497,7 +495,7 @@ impl Client {
                    _ receiver_status = {receiver_status:#?}");
         };
 
-        let app_session = media_app.to_app_session(destination_id.to_string())?;
+        let app_session = media_app.to_app_session(destination_id.clone())?;
         self.connection_connect(app_session.app_destination_id.clone()).await?;
 
         let media_status = self.media_status(app_session.clone(),
@@ -525,7 +523,7 @@ impl Client {
                    _ receiver_status = {receiver_status:#?}");
         };
 
-        let app_session = media_app.to_app_session(destination_id.to_string())?;
+        let app_session = media_app.to_app_session(destination_id.clone())?;
         self.connection_connect(app_session.app_destination_id.clone()).await?;
 
         let media_status = self.media_status(app_session.clone(),
@@ -1000,7 +998,7 @@ impl Client {
 /// Internals.
 impl Client {
     async fn init(&mut self) -> Result<()> {
-        self.connection_connect(DEFAULT_RECEIVER_ID.to_string()).await?;
+        self.connection_connect(EndpointId::DEFAULT_RECEIVER).await?;
 
         Ok(())
     }
@@ -1122,7 +1120,7 @@ impl Client {
                         request_id = request_id.inner(),
                         request_type = payload.typ,
                         request_namespace,
-                        sender, destination,
+                        %sender, %destination,
                         "payload struct");
 
         let payload_json = serde_json::to_string(&payload)?;
@@ -1132,7 +1130,7 @@ impl Client {
                         request_id = request_id.inner(),
                         request_type = payload.typ,
                         request_namespace,
-                        sender, destination,
+                        %sender, %destination,
                         "payload json");
 
         let request_message = CastMessage {
@@ -1671,7 +1669,7 @@ impl<S: TokioAsyncStream> Task<S> {
                         "pd.typ" = ?pd_type,
                         "message payload as PayloadDyn");
 
-        let msg_is_broadcast = msg.destination.as_str() == ENDPOINT_BROADCAST;
+        let msg_is_broadcast = msg.destination.is_broadcast();
         if msg_is_broadcast {
             tracing::debug!(target: METHOD_PATH,
                             ?msg, ?pd, pd_type,
@@ -1833,7 +1831,7 @@ impl<S: TokioAsyncStream> Task<S> {
         const METHOD_PATH: &str = method_path!("Task");
 
         tracing::debug!(target: METHOD_PATH,
-                        from,
+                        %from,
                         "received ping");
 
         // # Send pong.
@@ -1846,7 +1844,7 @@ impl<S: TokioAsyncStream> Task<S> {
         let destination = from;
         tracing::trace!(target: METHOD_PATH,
                         ?pong_pd,
-                        source, destination,
+                        %source, %destination,
                         "pong payload struct");
 
         let pong_pd_json = match serde_json::to_string(&pong_pd) {
@@ -1855,7 +1853,7 @@ impl<S: TokioAsyncStream> Task<S> {
                 tracing::error!(target: METHOD_PATH,
                                 ?err,
                                 ?pong_pd,
-                                source, destination,
+                                %source, %destination,
                                 "serde_json serialisation error for pong payload");
                 return;
             },
@@ -1894,10 +1892,10 @@ impl<S: TokioAsyncStream> Task<S> {
             typ: payload::heartbeat::MESSAGE_TYPE_PING.into(),
             inner: payload::heartbeat::Ping {},
         };
-        let destination = DEFAULT_RECEIVER_ID.to_string();
+        let destination = EndpointId::DEFAULT_RECEIVER;
         tracing::trace!(target: METHOD_PATH,
                         ?ping_pd,
-                        source, destination,
+                        %source, %destination,
                         "ping payload struct");
 
         let ping_pd_json = match serde_json::to_string(&ping_pd) {
@@ -1906,7 +1904,7 @@ impl<S: TokioAsyncStream> Task<S> {
                 tracing::error!(target: METHOD_PATH,
                                 ?err,
                                 ?ping_pd,
-                                source, destination,
+                                %source, %destination,
                                 "serde_json serialisation error for ping payload");
                 return;
             },
@@ -2105,8 +2103,8 @@ impl codec::Encoder<CastMessage> for CastMessageCodec {
         proto_msg.set_protocol_version(ProtocolVersion::CASTV2_1_0);
 
         proto_msg.set_namespace(msg.namespace);
-        proto_msg.set_source_id(msg.source);
-        proto_msg.set_destination_id(msg.destination);
+        proto_msg.set_source_id(msg.source.into());
+        proto_msg.set_destination_id(msg.destination.into());
 
         match msg.payload {
             CastMessagePayload::String(s) => {
@@ -2185,8 +2183,8 @@ impl codec::Decoder for CastMessageCodec {
 
         let msg = CastMessage {
             namespace: proto_msg.take_namespace(),
-            source: proto_msg.take_source_id(),
-            destination: proto_msg.take_destination_id(),
+            source: proto_msg.take_source_id().into(),
+            destination: proto_msg.take_destination_id().into(),
             payload: match proto_msg.payload_type() {
                 PayloadType::STRING =>
                     CastMessagePayload::String(proto_msg.take_payload_utf8()),

@@ -16,11 +16,11 @@
 use anyhow::{bail, format_err};
 use crate::{
     async_client::Result,
+    message::EndpointId,
     types::{AppId, AppSession,
-            EndpointId,
             MediaSessionId,
             MessageType, MessageTypeConst,
-            NamespaceConst, AppSessionId},
+            NamespaceConst},
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_with::skip_serializing_none;
@@ -194,6 +194,7 @@ pub mod heartbeat {
 ///
 /// Reference: <https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages>
 pub mod media {
+    use crate::payload::receiver::AppSessionId;
     use super::*;
 
     pub const CHANNEL_NAMESPACE: NamespaceConst = "urn:x-cast:com.google.cast.media";
@@ -1960,7 +1961,7 @@ pub mod receiver {
             }
 
             pub fn to_app_session(&self, receiver_destination_id: EndpointId)
-                                  -> Result<AppSession> {
+            -> Result<AppSession> {
                 Ok(AppSession {
                     receiver_destination_id,
                     app_destination_id: self.transport_id.clone(),
@@ -2006,6 +2007,12 @@ pub mod receiver {
                 self == other.name
             }
         }
+
+        #[derive(Clone, Debug,
+                 Eq, Ord, PartialEq, PartialOrd,
+                 Deserialize, Serialize)]
+        #[serde(transparent)]
+        pub struct AppSessionId(String);
 
         /// Describes cast device volume options.
         #[skip_serializing_none]

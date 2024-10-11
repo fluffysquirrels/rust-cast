@@ -1,5 +1,9 @@
 // TODO: Move these to `src/payload.rs`
 
+use crate::{
+    message::EndpointId,
+    payload::receiver::AppSessionId,
+};
 use serde::{Deserialize, Serialize};
 
 pub type Namespace = String;
@@ -10,13 +14,6 @@ pub type MessageTypeConst = &'static str;
 
 pub type AppId = String;
 pub type AppIdConst = &'static str;
-
-pub type EndpointId = String;
-pub type EndpointIdConst = &'static str;
-
-pub const ENDPOINT_BROADCAST: EndpointIdConst = "*";
-
-pub type AppSessionId = String;
 
 /// Unique ID for the playback of an item in this app session.
 /// This ID is set by the receiver at LOAD.

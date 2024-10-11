@@ -4,8 +4,8 @@ use csscolorparser::Color;
 use futures::StreamExt;
 use rust_cast::{
     self as lib,
-    async_client::{self as client, Client, Error, Result,
-                   DEFAULT_RECEIVER_ID as RECEIVER_ID},
+    async_client::{self as client, Client, Error, Result},
+    message::EndpointId::DEFAULT_RECEIVER as RECEIVER,
     payload::{self, media::{CustomData, ItemId}},
     types::{MediaSession, NamespaceConst},
     /* function_path, named, */
@@ -392,7 +392,7 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
 }
 
 async fn status_single(client: &mut Client) -> Result<()> {
-    let receiver_status = client.receiver_status(RECEIVER_ID.to_string()).await?;
+    let receiver_status = client.receiver_status(RECEIVER).await?;
 
     print_receiver_status(&receiver_status);
 
@@ -400,7 +400,7 @@ async fn status_single(client: &mut Client) -> Result<()> {
         receiver_status.applications.iter().filter(
             |app| app.has_namespace(MEDIA_NS))
     {
-        let app_session = media_app.to_app_session(RECEIVER_ID.to_string())?;
+        let app_session = media_app.to_app_session(RECEIVER)?;
         client.connection_connect(app_session.app_destination_id.clone()).await?;
         let media_status = client.media_status(app_session.clone(),
                                                /* media_session_id: */ None).await?;
@@ -432,7 +432,7 @@ async fn status_single(client: &mut Client) -> Result<()> {
 }
 
 async fn app_stop_main(client: &mut Client) -> Result<()> {
-    let initial_status = client.receiver_status(RECEIVER_ID.to_string()).await?;
+    let initial_status = client.receiver_status(RECEIVER).await?;
 
     println!("initial_status = {initial_status:#?}");
 
@@ -475,7 +475,7 @@ async fn set_volume_main(client: &mut Client, sub_args: SetVolumeArgs) -> Result
         control_type: None,
         step_interval: None,
     };
-    let status = client.receiver_set_volume(RECEIVER_ID.to_string(), volume).await?;
+    let status = client.receiver_set_volume(RECEIVER, volume).await?;
     println!("status = {status:#?}");
 
     Ok(())
@@ -507,7 +507,7 @@ async fn media_edit_tracks_info_main(client: &mut Client, sub_args: MediaEditTra
 
 async fn media_launch_main(client: &mut Client) -> Result<()> {
     let _app_session = client.media_get_or_launch_default_app_session(
-        RECEIVER_ID.to_string()).await?;
+        RECEIVER).await?;
 
     Ok(())
 }
@@ -742,7 +742,7 @@ async fn demo_main(client: &mut Client, sub_args: DemoArgs) -> Result<()> {
 
 async fn heartbeat_main(client: &mut Client) -> Result<()>
 {
-    client.connection_connect(RECEIVER_ID.to_string()).await?;
+    client.connection_connect(RECEIVER).await?;
 
     pause().await?;
 
@@ -753,7 +753,7 @@ async fn media_load(client: &mut Client, load_args: payload::media::LoadRequestA
  -> Result<MediaSession>
 {
     let app_session = client.media_get_or_launch_default_app_session(
-        RECEIVER_ID.to_string()).await?;
+        RECEIVER).await?;
 
     let load_status = client.media_load(app_session.clone(), load_args).await?;
     println!("media_load_res = {load_status:#?}",

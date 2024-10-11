@@ -25,7 +25,6 @@ pub enum Target {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-#[allow(non_snake_case)]
 enum RecordKindVariant {
     A,
     PTR,
