@@ -368,22 +368,22 @@ pub mod media {
                 match &mut self.tracks {
                     None => self.tracks = Some(vec![
                         Track {
-                            track_id: track.track_id.or(Some(TRACK_ID_FIRST)),
+                            track_id: track.track_id.or(Some(TrackId::FIRST)),
                             .. track
                         }
                     ]),
                     Some(tracks) => {
-                        let max_id = tracks.iter()
-                                           .flat_map(|t| t.track_id)
-                                           .max()
-                                           .unwrap_or(0);
-                        let next_id = max_id.checked_add(1)
+                        let max_id_i32 = tracks.iter()
+                                               .flat_map(|t| t.track_id.map(|id| id.to_i32()))
+                                               .max()
+                                               .unwrap_or(0_i32);
+                        let next_id = max_id_i32.checked_add(1_i32)
                             .ok_or_else(|| format_err!(
                                 "with_track: \
                                  TrackID overflowed while calculating 1 + current maximum."))?;
                         tracks.push(
                             Track {
-                                track_id: Some(next_id),
+                                track_id: Some(TrackId::from(next_id)),
                                 .. track
                             });
                     },
@@ -786,7 +786,7 @@ pub mod media {
                     "Track::track_id must be set before serialization."));
             };
 
-            serializer.serialize_i32(*track_id)
+            serializer.serialize_i32(track_id.to_i32())
         }
 
         impl Track {
@@ -1099,12 +1099,83 @@ pub mod media {
             }
         }
 
-        // TODO: Switch to newtype.
-        pub type ItemId = i32;
+        #[derive(Clone, Copy, Debug,
+                 Hash, Eq, PartialEq, Ord, PartialOrd,
+                 Deserialize, Serialize)]
+        #[serde(transparent)]
+        pub struct ItemId(i32);
 
-        // TODO: Switch to newtype.
-        pub type TrackId = i32;
-        pub const TRACK_ID_FIRST: TrackId = 1;
+        impl ItemId {
+            pub fn to_i32(self) -> i32 {
+                self.0
+            }
+        }
+
+        impl From<i32> for ItemId {
+            fn from(id: i32) -> Self {
+                Self(id)
+            }
+        }
+
+        impl From<ItemId> for i32 {
+            fn from(id: ItemId) -> i32 {
+                id.0
+            }
+        }
+
+        impl Display for ItemId {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                Display::fmt(&self.0, f)
+            }
+        }
+
+        impl FromStr for ItemId {
+            type Err = std::num::ParseIntError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                Ok(ItemId::from(i32::from_str(s)?))
+            }
+        }
+
+        #[derive(Clone, Copy, Debug,
+                 Hash, Eq, PartialEq, Ord, PartialOrd,
+                 Deserialize, Serialize)]
+        #[serde(transparent)]
+        pub struct TrackId(i32);
+
+        impl TrackId {
+            pub fn to_i32(self) -> i32 {
+                self.0
+            }
+
+            pub const FIRST: TrackId = TrackId(1);
+        }
+
+        impl From<i32> for TrackId {
+            fn from(id: i32) -> Self {
+                Self(id)
+            }
+        }
+
+        impl From<TrackId> for i32 {
+            fn from(id: TrackId) -> i32 {
+                id.0
+            }
+        }
+
+        impl Display for TrackId {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                Display::fmt(&self.0, f)
+            }
+        }
+
+        impl FromStr for TrackId {
+            type Err = std::num::ParseIntError;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                Ok(TrackId::from(i32::from_str(s)?))
+            }
+        }
 
         // TODO: Switch to newtype.
         pub type MimeType = String;
