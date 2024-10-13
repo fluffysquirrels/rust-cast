@@ -222,6 +222,12 @@ struct StatusArgs {
     /// Requires `--follow`.
     #[arg(long, default_value_t = false, requires = "follow")]
     poll: bool,
+
+    #[arg(long, default_value_t = false)]
+    no_metadata: bool,
+
+    #[arg(long, default_value_t = false)]
+    no_queue_items: bool,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -332,7 +338,11 @@ async fn main() -> Result<()> {
 }
 
 async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
-    status_single(client).await?;
+    let status_options = payload::media::GetStatusOptions::default()
+                               .with_no_metadata(sub_args.no_metadata)
+                               .with_no_queue_items(sub_args.no_queue_items);
+
+    status_single_with_options(client, status_options).await?;
 
     if sub_args.follow {
         enum Event {
@@ -363,7 +373,7 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
         while let Some(event) = merged.next().await {
             match event {
                 Event::PollStatus => {
-                    status_single(client).await?;
+                    status_single_with_options(client, status_options).await?;
                 },
                 Event::Update(update) => {
                     if tracing::event_enabled!(tracing::Level::TRACE) {
@@ -393,6 +403,12 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
 }
 
 async fn status_single(client: &mut Client) -> Result<()> {
+    status_single_with_options(client, payload::media::GetStatusOptions::default()).await
+}
+
+async fn status_single_with_options(client: &mut Client,
+                                    status_options: payload::media::GetStatusOptions
+) -> Result<()> {
     let receiver_status = client.receiver_status(RECEIVER).await?;
 
     print_receiver_status(&receiver_status);
@@ -401,8 +417,11 @@ async fn status_single(client: &mut Client) -> Result<()> {
     {
         let app_session = media_app.to_app_session(RECEIVER)?;
         client.connection_connect(app_session.app_destination_id.clone()).await?;
-        let media_status = client.media_status(app_session.clone(),
-                                               /* media_session_id: */ None).await?;
+        let media_status = client.media_status_with_options(app_session.clone(),
+                                                            /* media_session_id: */ None,
+                                                            status_options
+        ).await?;
+
         print_media_status(&media_status);
 
         if let Some(media_session_id) = media_status.try_find_media_session_id().ok() {

@@ -399,7 +399,7 @@ pub mod media {
         }
 
         mod media_commands {
-            #![allow(unused_braces)]
+            #![allow(unused_braces)] // modular_bitfield::bitfield macro triggers this on some compiler versions.
 
             use serde::{Serialize, Serializer, Deserialize, Deserializer};
 
@@ -437,6 +437,8 @@ pub mod media {
                 // TODO: Test and add more bits from the web receiver API reference.
             }
 
+            /// Serialise MediaCommands as JSON with each bit extracted
+            /// for easy use in the web client.
             #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
             pub(in crate::payload::media) struct MediaCommandsObject {
                 pub pause: bool,
@@ -1438,12 +1440,48 @@ pub mod media {
     #[serde(rename_all = "camelCase")]
     pub struct GetStatusRequest {
         pub media_session_id: Option<MediaSessionId>,
+        pub options: GetStatusOptions,
     }
 
     impl RequestInner for GetStatusRequest {
         const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
         const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_GET_STATUS;
     }
+
+    mod get_status_options {
+        #![allow(unused_braces)] // modular_bitfield::bitfield macro triggers this on some compiler versions.
+
+        use serde::{Deserialize, Serialize};
+
+        /// Only documented in the Cast Web Receiver.
+        ///
+        /// Const definitions extracted from web cast receiver JavaScript.
+        ///
+        /// Ref: https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.GetStatusOptions
+        #[modular_bitfield::bitfield]
+        #[repr(u8)]
+        #[derive(Clone, Copy, Debug)]
+        #[derive(Deserialize, Serialize)]
+        #[serde(from = "u8", into = "u8")]
+        pub struct GetStatusOptions {
+            /// As bits: 1
+            pub no_metadata: bool,
+
+            /// As bits: 2
+            pub no_queue_items: bool,
+
+            /// Ignore remainder of `u8`.
+            #[skip]
+            __: modular_bitfield::specifiers::B6,
+        }
+
+        impl Default for GetStatusOptions {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+    }
+    pub use get_status_options::*;
 
     #[derive(Debug, Deserialize)]
     #[serde(tag = "type",
@@ -2084,6 +2122,47 @@ pub mod media {
                      as_bitfield: 0b_1100_0011,
                      ..EMPTY_MEDIA_COMMANDS_OBJECT
                  });
+        }
+
+        #[test]
+        #[expect(non_snake_case)]
+        fn serde_GetStatusOptions() {
+            fn case(opts: GetStatusOptions, expected_as_u8: u8) {
+                let as_u8 = u8::from(opts);
+                let as_json = serde_json::to_string(&opts).unwrap();
+                let from_json: GetStatusOptions = serde_json::from_str(&as_json).unwrap();
+                let from_json_as_u8 = u8::from(from_json);
+
+                let msg = format!(
+                    "opts            = {opts:?}\n\
+                     expected_as_u8  = {expected_as_u8}\n\
+                     as_u8           = {as_u8}\n\
+                     as_json         = {as_json:?}\n\
+                     from_json       = {from_json:?}\n\
+                     from_json_as_u8 = {from_json_as_u8}");
+
+                print!("\n\
+                        serde_GetStatusOptions case\n\
+                        ===========================\n\
+                        {msg}\n\n");
+
+                assert_eq!(as_u8, expected_as_u8, "expected as u8\n{msg}");
+                assert_eq!(as_u8, from_json_as_u8, "round trip through json as u8\n{msg}");
+                assert_eq!(opts.no_metadata(), from_json.no_metadata(),
+                           "no_metadata field through json\n{msg}");
+
+                assert_eq!(opts.no_queue_items(), from_json.no_queue_items(),
+                           "no_queue_items field through json\n{msg}");
+            }
+
+            let default_opts = GetStatusOptions::default();
+
+            case(default_opts, 0);
+            case(default_opts.with_no_metadata(true), 1);
+            case(default_opts.with_no_queue_items(true), 2);
+            case(default_opts.with_no_metadata(true)
+                             .with_no_queue_items(true),
+                 3);
         }
     }
 }

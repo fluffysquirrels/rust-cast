@@ -600,13 +600,24 @@ impl Client {
         Ok((app_session, status))
     }
 
-    #[named]
     pub async fn media_status(&mut self,
                               app_session: AppSession,
                               media_session_id: Option<MediaSessionId>)
     -> Result<payload::media::Status> {
+        self.media_status_with_options(
+            app_session, media_session_id,
+            payload::media::GetStatusOptions::default()
+        ).await
+    }
+
+    #[named]
+    pub async fn media_status_with_options(&mut self,
+                              app_session: AppSession,
+                              media_session_id: Option<MediaSessionId>,
+                              options: payload::media::GetStatusOptions)
+    -> Result<payload::media::Status> {
         let payload_req = payload::media::GetStatusRequest {
-            media_session_id,
+            media_session_id, options,
         };
 
         let resp: Payload<payload::media::GetStatusResponse>
