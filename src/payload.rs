@@ -279,6 +279,8 @@ pub mod media {
     pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEM_IDS: MessageType = MessageType::from_const("QUEUE_ITEM_IDS");
     pub const MESSAGE_RESPONSE_TYPE_QUEUE_ITEMS: MessageType = MessageType::from_const("QUEUE_ITEMS");
 
+    pub const MESSAGE_EVENT_TYPE_QUEUE_CHANGE: MessageType = MessageType::from_const("QUEUE_CHANGE");
+
     mod shared {
         use super::*;
 
@@ -1232,6 +1234,31 @@ pub mod media {
                 Display::fmt(&self.0, f)
             }
         }
+
+
+        #[derive(Clone, Copy, Debug,
+                 Eq, PartialEq, Ord, PartialOrd,
+                 Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct SequenceNumber(i32);
+
+        impl Display for SequenceNumber {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                Display::fmt(&self.0, f)
+            }
+        }
+
+        impl From<i32> for SequenceNumber {
+            fn from(n: i32) -> Self {
+                Self(n)
+            }
+        }
+
+        impl From<SequenceNumber> for i32 {
+            fn from(seq: SequenceNumber) -> i32 {
+                seq.0
+            }
+        }
     }
     pub use self::shared::*;
 
@@ -1330,6 +1357,12 @@ pub mod media {
             }
         };
     }
+
+    simple_media_request!(PlayRequest,  MESSAGE_REQUEST_TYPE_PLAY);
+    simple_media_request!(PauseRequest, MESSAGE_REQUEST_TYPE_PAUSE);
+    simple_media_request!(StopRequest,  MESSAGE_REQUEST_TYPE_STOP);
+
+    simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
 
 
 
@@ -1508,6 +1541,41 @@ pub mod media {
 
 
 
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct QueueChangeEvent {
+        pub change_type: Option<QueueChangeType>,
+        pub insert_before: Option<ItemId>,
+        pub item_ids: Option<Vec<ItemId>>,
+        pub reorder_item_ids: Option<Vec<ItemId>>,
+        pub sequence_number: Option<SequenceNumber>,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+    pub enum QueueChangeType {
+        /// Queue had items inserted.
+        Insert,
+
+        /// Queue had items removed.
+        Remove,
+
+        /// A list of items changed.
+        ItemsChange,
+
+        /// The queue went through an update and a new ordered list is sent.
+        Update,
+
+        /// The queue had no change.
+        /// This is used to echo back when multiple senders ended up requesting the same data.
+        NoChange,
+
+        #[serde(untagged)]
+        Unknown(String),
+    }
+
+
+
     #[skip_serializing_none]
     #[derive(Debug, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -1547,8 +1615,6 @@ pub mod media {
     }
 
 
-
-    simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
 
     #[derive(Debug, Deserialize)]
     #[serde(tag = "type", rename_all = "camelCase")]
@@ -1761,6 +1827,7 @@ pub mod media {
         /// Play the item forward or back by this offset in the queue items list.
         pub jump: Option<i32>,
         pub repeat_mode: Option<RepeatMode>,
+        pub shuffle: Option<bool>,
     }
 
     impl RequestInner for QueueUpdateRequest {
@@ -1799,6 +1866,7 @@ pub mod media {
                 items: None,
                 jump: None,
                 repeat_mode: None,
+                shuffle: None,
             }
         }
     }
@@ -1867,13 +1935,6 @@ pub mod media {
         const CHANNEL_NAMESPACE: Namespace = CHANNEL_NAMESPACE;
         const TYPE_NAME: MessageType = MESSAGE_REQUEST_TYPE_SET_PLAYBACK_RATE;
     }
-
-
-
-    simple_media_request!(PlayRequest,  MESSAGE_REQUEST_TYPE_PLAY);
-    simple_media_request!(PauseRequest, MESSAGE_REQUEST_TYPE_PAUSE);
-    simple_media_request!(StopRequest,  MESSAGE_REQUEST_TYPE_STOP);
-
 
 
     #[cfg(test)]

@@ -214,6 +214,7 @@ pub enum StatusMessage {
     // HeartbeatPongSent,
 
     Media(MediaStatusMessage),
+    QueueChange(QueueChangeMessage),
     Receiver(ReceiverStatusMessage),
 }
 
@@ -295,6 +296,12 @@ pub struct ReceiverStatusMessage {
 pub struct MediaStatusMessage {
     pub app_destination_id: EndpointId,
     pub media_status: payload::media::Status,
+}
+
+#[derive(Clone, Debug)]
+pub struct QueueChangeMessage {
+    pub app_destination_id: EndpointId,
+    pub queue_change: payload::media::QueueChangeEvent,
 }
 
 
@@ -1755,6 +1762,13 @@ impl<S: TokioAsyncStream> Task<S> {
             self.publish_media_status(&msg, &pd, msg_time);
         }
 
+        // Media namespace queue change from remote; try to publish update to listeners.
+        if *msg_ns == payload::media::CHANNEL_NAMESPACE
+            && pd.typ == payload::media::MESSAGE_EVENT_TYPE_QUEUE_CHANGE
+        {
+            self.publish_queue_change(&msg, &pd, msg_time);
+        }
+
         let request_id = match pd.request_id {
             Some(RequestId::BROADCAST) | None => {
                 if msg_is_broadcast {
@@ -2044,6 +2058,31 @@ impl<S: TokioAsyncStream> Task<S> {
             msg: StatusMessage::Media(MediaStatusMessage {
                 app_destination_id: msg.source.clone(),
                 media_status: pd_typed.inner,
+            }),
+        };
+        self.publish_status_update(update);
+    }
+
+    #[named]
+    fn publish_queue_change(&self,
+                            msg: &CastMessage, pd: &PayloadDyn, msg_time: DateTime<Utc>)
+    {
+        let pd_typed: Payload::<payload::media::QueueChangeEvent> =
+            match serde_json::from_value(pd.inner.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::error!(target: method_path!("Task"),
+                                    ?pd, ?msg, ?err,
+                                    "error deserialising typed media status payload");
+                    return;
+                }
+            };
+
+        let update = StatusUpdate {
+            time: msg_time,
+            msg: StatusMessage::QueueChange(QueueChangeMessage {
+                app_destination_id: msg.source.clone(),
+                queue_change: pd_typed.inner,
             }),
         };
         self.publish_status_update(update);
