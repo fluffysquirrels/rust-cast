@@ -406,10 +406,7 @@ async fn status_single(client: &mut Client) -> Result<()> {
         print_media_status(&media_status);
 
         if let Some(media_session_id) = media_status.try_find_media_session_id().ok() {
-            let media_session = MediaSession {
-                app_session: app_session.clone(),
-                media_session_id,
-            };
+            let media_session = app_session.clone().into_media_session(media_session_id);
 
             if let Some(item_ids) = client.media_queue_get_item_ids(media_session).await
                 .inspect_err(|err| tracing::error!(err = format!("{err:#?}"),
@@ -758,10 +755,7 @@ async fn media_load(client: &mut Client, load_args: payload::media::LoadRequestA
     println!("media_load_res = {load_status:#?}",
              load_status = payload::media::small_debug::MediaStatus(&load_status));
 
-    Ok(MediaSession {
-        app_session,
-        media_session_id: load_status.try_find_media_session_id()?,
-    })
+    Ok(app_session.into_media_session(load_status.try_find_media_session_id()?))
 }
 
 fn print_receiver_status(receiver_status: &payload::receiver::Status) {

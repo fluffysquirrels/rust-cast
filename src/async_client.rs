@@ -231,10 +231,9 @@ pub enum ConnectionState {
 #[cfg(any())] // Disabled for now, may come back to it.
 #[derive(Clone, Debug)]
 pub struct ErrorStatus {
-    // TODO: Implement this.
+    // TODO: Implement this?
 
     // pub io_error_kind: Option<std::io::ErrorKind>,
-
     // pub connected: bool,
 }
 
@@ -245,6 +244,15 @@ pub struct AppSession {
     pub receiver_destination_id: EndpointId,
 
     pub app_session_id: AppSessionId,
+}
+
+impl AppSession {
+    pub fn into_media_session(self, media_session_id: MediaSessionId) -> MediaSession {
+        MediaSession {
+            app_session: self,
+            media_session_id,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq,
@@ -270,6 +278,13 @@ impl MediaSession {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct ReceiverStatuses {
+    pub receiver_id: EndpointId,
+    pub receiver_status: payload::receiver::Status,
+    pub media_statuses: Vec<(MediaSession, payload::media::StatusEntry)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ReceiverStatusMessage {
     pub receiver_id: EndpointId,
@@ -282,12 +297,6 @@ pub struct MediaStatusMessage {
     pub media_status: payload::media::Status,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct ReceiverStatuses {
-    pub receiver_id: EndpointId,
-    pub receiver_status: payload::receiver::Status,
-    pub media_statuses: Vec<(MediaSession, payload::media::StatusEntry)>,
-}
 
 const DATA_BUFFER_LEN: usize = 64 * 1024;
 
@@ -307,6 +316,7 @@ static JSON_NAMESPACES: Lazy<HashSet<Namespace>> = Lazy::<HashSet<Namespace>>::n
 });
 
 pub const DEFAULT_PORT: u16 = 8009;
+
 
 impl Config {
     pub fn from_addr(addr: SocketAddr) -> Config {
@@ -384,10 +394,9 @@ impl Client {
                                                  /* media_session_id: */ None).await?;
 
             for media_status_entry in media_status.entries.into_iter() {
-                let media_session = MediaSession {
-                    app_session: app_session.clone(),
-                    media_session_id: media_status_entry.media_session_id,
-                };
+                let media_session =
+                    app_session.clone()
+                               .into_media_session(media_status_entry.media_session_id);
 
                 media_statuses.push((media_session, media_status_entry));
             }
@@ -519,10 +528,7 @@ impl Client {
         let media_status = self.media_status(app_session.clone(),
                                              /* media_session_id: */ None).await?;
 
-        Ok(MediaSession {
-            app_session,
-            media_session_id: media_status.try_find_media_session_id()?,
-        })
+        Ok(app_session.into_media_session(media_status.try_find_media_session_id()?))
     }
 
     #[named]
@@ -547,10 +553,7 @@ impl Client {
         let media_status = self.media_status(app_session.clone(),
                                              /* media_session_id: */ None).await?;
 
-        Ok(MediaSession {
-            app_session,
-            media_session_id: media_status.try_find_media_session_id()?,
-        })
+        Ok(app_session.into_media_session(media_status.try_find_media_session_id()?))
     }
 
     pub async fn media_get_or_launch_default_app_session(&mut self, destination_id: EndpointId)
@@ -584,10 +587,7 @@ impl Client {
         let media_status = self.media_status(app_session.clone(),
                                              /* media_session_id: */ None).await?;
 
-        Ok(MediaSession {
-            app_session,
-            media_session_id: media_status.try_find_media_session_id()?,
-        })
+        Ok(app_session.into_media_session(media_status.try_find_media_session_id()?))
     }
 
     pub async fn media_launch_default(&mut self, destination_id: EndpointId)
@@ -2221,6 +2221,44 @@ impl StatusMessage {
             time: Utc::now(),
             msg: self,
         }
+    }
+}
+
+impl ReceiverStatuses {
+    pub fn get_media_status_entry(&self, ids: &MediaSession)
+    -> Option<&payload::media::StatusEntry>
+    {
+        self.media_statuses.iter()
+            .find(|it| it.0 == *ids)
+            .map(|it| &it.1)
+    }
+
+    pub fn get_mut_media_status_entry(&mut self, ids: &MediaSession)
+    -> Option<&mut payload::media::StatusEntry>
+    {
+        self.media_statuses.iter_mut()
+            .find(|it| it.0 == *ids)
+            .map(|it| &mut it.1)
+    }
+
+    pub fn get_media_status_entry_by_ids(
+        &self, app_transport_id: &EndpointId, media_session_id: MediaSessionId)
+    -> Option<&payload::media::StatusEntry>
+    {
+        self.media_statuses.iter()
+            .find(|it| it.0.app_destination_id() == app_transport_id
+                       && it.0.media_session_id == media_session_id)
+            .map(|it| &it.1)
+    }
+
+    pub fn get_mut_media_status_entry_by_ids(
+        &mut self, app_transport_id: &EndpointId, media_session_id: MediaSessionId)
+    -> Option<&mut payload::media::StatusEntry>
+    {
+        self.media_statuses.iter_mut()
+            .find(|it| it.0.app_destination_id() == app_transport_id
+                       && it.0.media_session_id == media_session_id)
+            .map(|it| &mut it.1)
     }
 }
 
