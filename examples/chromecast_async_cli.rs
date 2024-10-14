@@ -79,6 +79,13 @@ struct DemoArgs {
 
 #[derive(clap::Args, Clone, Debug)]
 struct MediaEditTracksInfoArgs {
+    /// If passed, updates active tracks for current playback.
+    ///
+    /// `--tracks` to set no active tracks.
+    ///
+    /// `--tracks=1` to set an active track.
+    ///
+    /// `--tracks=1,2[,...]` to set several active tracks.
     #[arg(long, visible_alias = "tracks",
           action(clap::ArgAction::Set),
           allow_negative_numbers = true,
