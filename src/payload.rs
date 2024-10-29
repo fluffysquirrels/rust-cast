@@ -2595,6 +2595,17 @@ pub mod receiver {
     }
 }
 
+pub mod youtube {
+    use super::*;
+
+    use super::media::MimeType;
+
+    pub const CHANNEL_NAMESPACE: Namespace =
+        Namespace::from_const("urn:x-cast:com.google.youtube.mdx");
+
+    pub const MIME_TYPE_YOUTUBE_VIDEO: MimeType = MimeType::from_const("x-youtube/video");
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
