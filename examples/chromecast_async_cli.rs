@@ -384,7 +384,7 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
                 },
                 Event::Update(update) => {
                     if tracing::event_enabled!(tracing::Level::TRACE) {
-                        println!("listener status update (small) = {update:#?}");
+                        println!("listener status update (full) = {update:#?}");
                     }
 
                     println!(" # listener status update (small) = {update_small:#?}\n\
