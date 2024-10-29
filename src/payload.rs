@@ -1249,7 +1249,7 @@ pub mod media {
 
 
         #[derive(Clone, Copy, Debug,
-                 Eq, PartialEq, Ord, PartialOrd,
+                 Hash, Eq, PartialEq, Ord, PartialOrd,
                  Serialize, Deserialize)]
         #[serde(transparent)]
         pub struct SequenceNumber(i32);
@@ -1373,8 +1373,6 @@ pub mod media {
     simple_media_request!(PlayRequest,  MESSAGE_REQUEST_TYPE_PLAY);
     simple_media_request!(PauseRequest, MESSAGE_REQUEST_TYPE_PAUSE);
     simple_media_request!(StopRequest,  MESSAGE_REQUEST_TYPE_STOP);
-
-    simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
 
 
 
@@ -1558,8 +1556,16 @@ pub mod media {
     pub struct QueueChangeEvent {
         pub change_type: Option<QueueChangeType>,
         pub insert_before: Option<ItemId>,
+
+        /// The list of changed item IDs.
         pub item_ids: Option<Vec<ItemId>>,
+
+        /// The list of reordered item IDs.
+        /// This is only used as a response for a QUEUE_REORDER request.
+        /// The changeType becomes UPDATE, and itemIds contain the full list of queue
+        /// items.
         pub reorder_item_ids: Option<Vec<ItemId>>,
+
         pub sequence_number: Option<SequenceNumber>,
     }
 
@@ -1627,6 +1633,7 @@ pub mod media {
     }
 
 
+    simple_media_request!(QueueGetItemIdsRequest, MESSAGE_REQUEST_TYPE_QUEUE_GET_ITEM_IDS);
 
     #[derive(Debug, Deserialize)]
     #[serde(tag = "type", rename_all = "camelCase")]
