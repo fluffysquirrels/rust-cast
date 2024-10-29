@@ -3,7 +3,9 @@ use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Utc};
 use crate::{
     message::{
+        self,
         CastMessage,
+        CastMessageMeta,
         CastMessagePayload,
         EndpointId,
         Namespace,
@@ -209,13 +211,21 @@ pub enum StatusMessage {
     /// Connection closed due to an error.
     ClosedErr,
 
-    // TODO: Implement these?
-    // HeartbeatPingSent,
-    // HeartbeatPongSent,
+    CastMessageLog(CastMessageLog),
 
     Media(MediaStatusMessage),
     QueueChange(QueueChangeMessage),
     Receiver(ReceiverStatusMessage),
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CastMessageLog {
+    #[serde(flatten)]
+    pub meta: CastMessageMeta,
+
+    pub request_id: Option<RequestId>,
+    pub message_type: Option<MessageType>,
+    pub payload_inner: serde_json::Value,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -319,6 +329,7 @@ static JSON_NAMESPACES: Lazy<HashSet<Namespace>> = Lazy::<HashSet<Namespace>>::n
         payload::heartbeat::CHANNEL_NAMESPACE,
         payload::media::CHANNEL_NAMESPACE,
         payload::receiver::CHANNEL_NAMESPACE,
+        payload::youtube::CHANNEL_NAMESPACE,
     ])
 });
 
@@ -1151,6 +1162,21 @@ impl Client {
         let sender = self.config().sender.clone();
         let request_namespace = Req::CHANNEL_NAMESPACE;
 
+        let msg_log = CastMessageLog {
+            meta: CastMessageMeta {
+                namespace: request_namespace.clone(),
+                source: sender.clone(),
+                destination: destination.clone(),
+                direction: message::Direction::Send,
+            },
+
+            request_id: Some(request_id),
+            message_type: Some(payload.typ.clone()),
+            payload_inner: serde_json::to_value(&payload.inner)?,
+        };
+
+        self.shared.msg_log(msg_log);
+
         tracing::debug!(target: METHOD_PATH,
                         ?payload,
                         request_id = request_id.inner(),
@@ -1575,23 +1601,51 @@ impl<S: TokioAsyncStream> Task<S> {
     }
 
     #[named]
-    async fn send_logged(mut self: Pin<&mut Self>, msg: CastMessage) {
+    async fn send_logged(
+        mut self: Pin<&mut Self>,
+        meta: CastMessageMeta,
+        payload: PayloadDyn)
+    {
         const METHOD_PATH: &str = method_path!("Task");
 
         let deadline = tokio::time::Instant::now()
             .checked_add(self.config().rpc_timeout)
             .unwrap_or_else(|| panic!("{METHOD_PATH}: error calculating deadline"));
 
+        self.shared.msg_log(CastMessageLog {
+            meta: meta.clone(),
+            request_id: payload.request_id,
+            message_type: Some(payload.typ.clone()),
+            payload_inner: payload.inner.clone(),
+        });
+
+        let pd_str = match serde_json::to_string(&payload) {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::error!(target: METHOD_PATH,
+                                ?meta, ?payload, ?err,
+                                "error serialising payload to json");
+                return;
+            },
+        };
+
+        let msg = CastMessage {
+            namespace: meta.namespace,
+            source: meta.source,
+            destination: meta.destination,
+            payload: pd_str.into(),
+        };
+
         let msg_debug = format!("{msg:?}");
 
         tracing::debug!(target: METHOD_PATH,
                         ?deadline,
-                        ?msg,
+                        msg = &msg_debug,
                         "msg send");
 
         let res = self.as_mut().send_raw(msg, deadline).await;
 
-        if let Err(ref err) = res {
+        if let Err(err) = res {
             tracing::warn!(target: METHOD_PATH,
                            ?err,
                            msg = msg_debug,
@@ -1651,28 +1705,29 @@ impl<S: TokioAsyncStream> Task<S> {
                         "message read");
 
         let msg_ns = &msg.namespace;
-        if !JSON_NAMESPACES.contains(msg_ns) {
-            tracing::warn!(target: METHOD_PATH,
-                           %msg_ns,
-                           ?msg,
-                           "message namespace not known");
-            return;
-        }
 
         let pd_json_str = match &msg.payload {
             CastMessagePayload::Binary(_b) => {
                 tracing::warn!(target: METHOD_PATH,
                                %msg_ns,
                                ?msg,
-                               "binary message not known");
+                               "binary message namespace not known");
                 return;
             },
             CastMessagePayload::String(s) => s.as_str(),
         };
 
         tracing::trace!(target: METHOD_PATH,
-                        pd_json_str,
+                        pd_json_str, %msg_ns,
                         "message payload json string");
+
+        if !JSON_NAMESPACES.contains(msg_ns) {
+            tracing::warn!(target: METHOD_PATH,
+                           %msg_ns,
+                           ?msg,
+                           "json message namespace not known");
+            return;
+        }
 
         let pd_all_dyn: serde_json::Value = match serde_json::from_str(pd_json_str) {
             Err(err) => {
@@ -1698,6 +1753,21 @@ impl<S: TokioAsyncStream> Task<S> {
         };
 
         let pd_type = &pd.typ;
+
+        let msg_log = CastMessageLog {
+            meta: CastMessageMeta {
+                direction: message::Direction::Receive,
+                namespace: msg_ns.to_owned(),
+                source: msg.source.clone(),
+                destination: msg.destination.clone(),
+            },
+
+            request_id: pd.request_id,
+            message_type: Some(pd_type.clone()),
+            payload_inner: pd.inner.clone(),
+        };
+
+        self.shared.msg_log(msg_log);
 
         tracing::trace!(target: METHOD_PATH,
                         ?pd,
@@ -1870,7 +1940,7 @@ impl<S: TokioAsyncStream> Task<S> {
     }
 
     #[named]
-    async fn handle_read_ping(self: Pin<&mut Self>, from: EndpointId) {
+    async fn handle_read_ping(mut self: Pin<&mut Self>, from: EndpointId) {
         const METHOD_PATH: &str = method_path!("Task");
 
         tracing::debug!(target: METHOD_PATH,
@@ -1878,37 +1948,22 @@ impl<S: TokioAsyncStream> Task<S> {
                         "received ping");
 
         // # Send pong.
-        let source = self.config().sender.clone();
         let pong_pd = Payload::<payload::heartbeat::Pong> {
             request_id: None,
-            typ: payload::heartbeat::MESSAGE_TYPE_PONG.into(),
+            typ: payload::heartbeat::MESSAGE_TYPE_PONG,
             inner: payload::heartbeat::Pong {},
         };
-        let destination = from;
-        tracing::trace!(target: METHOD_PATH,
-                        ?pong_pd,
-                        %source, %destination,
-                        "pong payload struct");
+        let source = self.as_ref().config().sender.clone();
 
-        let pong_pd_json = match serde_json::to_string(&pong_pd) {
-            Ok(j) => j,
-            Err(err) => {
-                tracing::error!(target: METHOD_PATH,
-                                ?err,
-                                ?pong_pd,
-                                %source, %destination,
-                                "serde_json serialisation error for pong payload");
-                return;
+        self.as_mut().send_logged(
+            CastMessageMeta {
+                direction: message::Direction::Send,
+                namespace: payload::heartbeat::CHANNEL_NAMESPACE,
+                source,
+                destination: from,
             },
-        };
-
-        let pong_msg = CastMessage {
-            namespace: payload::heartbeat::CHANNEL_NAMESPACE.into(),
-            source, destination,
-            payload: pong_pd_json.into(),
-        };
-
-        self.send_logged(pong_msg).await
+            pong_pd.into_dyn().expect("trivial payload inner should serialize")
+        ).await
     }
 
     #[named]
@@ -1929,37 +1984,22 @@ impl<S: TokioAsyncStream> Task<S> {
             .reset(heartbeat_ping_send_deadline);
 
         // # Send ping.
-        let source = self.config().sender.clone();
         let ping_pd = Payload::<payload::heartbeat::Ping> {
             request_id: None,
-            typ: payload::heartbeat::MESSAGE_TYPE_PING.into(),
+            typ: payload::heartbeat::MESSAGE_TYPE_PING,
             inner: payload::heartbeat::Ping {},
         };
-        let destination = EndpointId::DEFAULT_RECEIVER;
-        tracing::trace!(target: METHOD_PATH,
-                        ?ping_pd,
-                        %source, %destination,
-                        "ping payload struct");
+        let source = self.as_ref().config().sender.clone();
 
-        let ping_pd_json = match serde_json::to_string(&ping_pd) {
-            Ok(j) => j,
-            Err(err) => {
-                tracing::error!(target: METHOD_PATH,
-                                ?err,
-                                ?ping_pd,
-                                %source, %destination,
-                                "serde_json serialisation error for ping payload");
-                return;
+        self.as_mut().send_logged(
+            CastMessageMeta {
+                direction: message::Direction::Send,
+                namespace: payload::heartbeat::CHANNEL_NAMESPACE,
+                source,
+                destination: EndpointId::DEFAULT_RECEIVER,
             },
-        };
-
-        let ping_msg = CastMessage {
-            namespace: payload::heartbeat::CHANNEL_NAMESPACE.into(),
-            source, destination,
-            payload: ping_pd_json.into(),
-        };
-
-        self.send_logged(ping_msg).await;
+            ping_pd.into_dyn().expect("trivial payload inner should serialize")
+        ).await;
     }
 
     fn respond_rpc(result_sender: TaskCmdResultSender,
@@ -2125,6 +2165,21 @@ impl<S: TokioAsyncStream> Task<S> {
 
     fn config(&self) -> &Config {
         &self.shared.config
+    }
+}
+
+impl Shared {
+    #[named]
+    fn msg_log(&self, msg_log: CastMessageLog) {
+        const TARGET: &str = function_path!();
+
+        tracing::debug!(target: TARGET,
+                        ?msg_log,
+                        "msg");
+
+        let update = StatusMessage::CastMessageLog(msg_log).now();
+
+        let _broadcast_res = self.status_tx.send(update);
     }
 }
 
@@ -2313,12 +2368,15 @@ impl ReceiverStatuses {
 }
 
 pub mod small_debug {
+    use crate::util::fmt::DebugNoAlternate;
     use super::*;
 
     pub struct StatusUpdate<'a>(pub &'a super::StatusUpdate);
     pub struct StatusMessage<'a>(pub &'a super::StatusMessage);
-    pub struct ReceiverStatusMessage<'a>(pub &'a super::ReceiverStatusMessage);
+
+    pub struct CastMessageLog<'a>(pub &'a super::CastMessageLog);
     pub struct MediaStatusMessage<'a>(pub &'a super::MediaStatusMessage);
+    pub struct ReceiverStatusMessage<'a>(pub &'a super::ReceiverStatusMessage);
 
 
     impl<'a> Debug for self::StatusUpdate<'a> {
@@ -2333,14 +2391,32 @@ pub mod small_debug {
     impl<'a> Debug for self::StatusMessage<'a> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self.0 {
+                super::StatusMessage::CastMessageLog(ml) =>
+                    Debug::fmt(&CastMessageLog(&ml), f),
+
                 super::StatusMessage::Media(ms) =>
                     Debug::fmt(&MediaStatusMessage(&ms), f),
 
                 super::StatusMessage::Receiver(rs) =>
                     Debug::fmt(&ReceiverStatusMessage(&rs), f),
 
-                _ => Debug::fmt(self, f),
+                ref inner => Debug::fmt(inner, f),
             }
+        }
+    }
+
+    impl<'a> Debug for self::CastMessageLog<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.debug_struct("CastMessageLog")
+             .field("direction", &self.0.meta.direction)
+             .field("namespace", &self.0.meta.namespace.as_str())
+             .field("source", &self.0.meta.source.as_str())
+             .field("destination", &self.0.meta.destination.as_str())
+             .field("request_id", &DebugNoAlternate(&self.0.request_id.as_ref()
+                                                         .map(|id| id.inner())))
+             .field("message_type", &DebugNoAlternate(&self.0.message_type.as_ref()
+                                                           .map(|t| t.as_str())))
+             .finish()
         }
     }
 

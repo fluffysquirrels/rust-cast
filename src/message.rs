@@ -40,6 +40,20 @@ pub struct CastMessage {
     pub payload: CastMessagePayload,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct CastMessageMeta {
+    pub direction: Direction,
+    pub namespace: Namespace,
+    pub source: EndpointId,
+    pub destination: EndpointId,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum Direction {
+    Receive,
+    Send,
+}
+
 impl From<String> for CastMessagePayload {
     fn from(s: String) -> CastMessagePayload {
         Self::String(s)

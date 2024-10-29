@@ -174,6 +174,18 @@ impl Display for MessageType {
     }
 }
 
+impl<T> Payload<T>
+where T: Serialize
+{
+    pub fn into_dyn(self) -> Result<PayloadDyn> {
+        Ok(PayloadDyn {
+            request_id: self.request_id,
+            typ: self.typ,
+            inner: serde_json::to_value(self.inner)?,
+        })
+    }
+}
+
 
 pub mod connection {
     use super::*;
@@ -1827,6 +1839,8 @@ pub mod media {
         /// Play the item forward or back by this offset in the queue items list.
         pub jump: Option<i32>,
         pub repeat_mode: Option<RepeatMode>,
+
+        // TODO: Expose this in CLI, test it.
         pub shuffle: Option<bool>,
     }
 
