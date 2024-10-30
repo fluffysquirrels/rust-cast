@@ -202,7 +202,9 @@ pub struct StatusUpdate {
     pub msg: StatusMessage,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug,
+         strum::EnumDiscriminants)]
+#[strum_discriminants(name(StatusMessageVariant))]
 #[non_exhaustive]
 pub enum StatusMessage {
     /// Connection closed by request.
@@ -216,6 +218,12 @@ pub enum StatusMessage {
     Media(MediaStatusMessage),
     QueueChange(QueueChangeMessage),
     Receiver(ReceiverStatusMessage),
+}
+
+impl StatusMessage {
+    pub fn to_variant(&self) -> StatusMessageVariant {
+        self.into()
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
