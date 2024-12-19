@@ -1,17 +1,17 @@
-/// Payloads used in Chromecast protocol messages.
-///
-/// For many `enum`s in this module, there will be fieldless variants matching
-/// what's in the Chromecast documentation, and then an `Unknown(T)` variant
-/// to deserialize any unknown variants returned by the Chromecast, where `T`
-/// is the wire representation (mostly `String` and a few integers).
-///
-/// Ideally, the `Unknown` variant would be marked with `#[serde(skip_serializing)]`,
-/// so serializing this variant would return an error, preventing consumers of this library
-/// from serializing messages to the Chromecast with unknown variants the Chromecast probably
-/// won't support. However another use case for serializing these `enum`s is to faithfully
-/// pass on whatever the Chromecast returned to this library, for example serializing the
-/// value to return as JSON in a web API. To support that use case, `#[serde(skip_serializing)]`
-/// is not applied to the `Unknown` variants at this time.
+//! Payloads used in Chromecast protocol messages.
+//!
+//! For many `enum`s in this module, there will be fieldless variants matching
+//! what's in the Chromecast documentation, and then an `Unknown(T)` variant
+//! to deserialize any unknown variants returned by the Chromecast, where `T`
+//! is the wire representation (mostly `String` and a few integers).
+//!
+//! Ideally, the `Unknown` variant would be marked with `#[serde(skip_serializing)]`,
+//! so serializing this variant would return an error, preventing consumers of this library
+//! from serializing messages to the Chromecast with unknown variants the Chromecast probably
+//! won't support. However another use case for serializing these `enum`s is to faithfully
+//! pass on whatever the Chromecast returned to this library, for example serializing the
+//! value to return as JSON in a web API. To support that use case, `#[serde(skip_serializing)]`
+//! is not applied to the `Unknown` variants at this time.
 
 use anyhow::{bail, format_err};
 use crate::{
