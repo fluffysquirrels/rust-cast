@@ -1500,7 +1500,7 @@ pub mod media {
         ///
         /// Const definitions extracted from web cast receiver JavaScript.
         ///
-        /// Ref: https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.GetStatusOptions
+        /// Ref: <https://developers.google.com/cast/docs/reference/web_receiver/cast.framework.messages#.GetStatusOptions>
         #[modular_bitfield::bitfield]
         #[repr(u8)]
         #[derive(Clone, Copy, Debug)]
