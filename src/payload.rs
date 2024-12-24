@@ -647,6 +647,8 @@ pub mod media {
             pub active_track_ids: Option<Vec<TrackId>>,
             pub current_item_id: Option<ItemId>,
             pub current_time: Option<Seconds>,
+
+            // TOOD: extended_status: ... // Received from default media receiver in testing.
             pub idle_reason: Option<IdleReason>,
             pub items: Option<Vec<QueueItem>>,
             pub loading_item_id: Option<ItemId>,
