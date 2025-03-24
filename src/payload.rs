@@ -19,7 +19,7 @@ use crate::{
     message::{EndpointId, Namespace},
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_with::skip_serializing_none;
+use serde_with::{serde_as, skip_serializing_none};
 use std::{
     borrow::{Borrow, Cow},
     fmt::{self, Debug, Display},
@@ -507,6 +507,7 @@ pub mod media {
         }
         pub use media_commands::*;
 
+        #[serde_as]
         #[skip_serializing_none]
         #[derive(Clone, Debug, Default, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -518,6 +519,16 @@ pub mod media {
             pub artist: Option<String>,
             pub composer: Option<String>,
             pub creation_date_time: Option<String>,
+
+            /// Disc number for musical media.
+            ///
+            /// A note on the data type:
+            /// the [Chromecast API reference] lists this field's type as "number or defined",
+            /// but in testing at least 1 sender app (VLC Android, playing music) recorded
+            /// an empty string instead. For now, just ignore the error with `serde_as`.
+            ///
+            /// [Chromecast API reference]: https://developers.google.com/cast/docs/reference/web_sender/chrome.cast.media.MusicTrackMediaMetadata#discNumber
+            #[serde_as(deserialize_as = "serde_with::DefaultOnError")]
             pub disc_number: Option<u32>,
             pub episode: Option<u32>,
             pub height: Option<u32>,
@@ -553,7 +564,7 @@ pub mod media {
             pub start_time: Option<Seconds>,
         }
 
-        #[serde_with::serde_as]
+        #[serde_as]
         #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -667,7 +678,7 @@ pub mod media {
             // pub volume: crate::payload::receiver::Volume,
         }
 
-        #[serde_with::serde_as]
+        #[serde_as]
         #[skip_serializing_none]
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all = "camelCase")]
