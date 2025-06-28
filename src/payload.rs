@@ -529,6 +529,7 @@ pub mod media {
             ///
             /// [Chromecast API reference]: https://developers.google.com/cast/docs/reference/web_sender/chrome.cast.media.MusicTrackMediaMetadata#discNumber
             #[serde_as(deserialize_as = "serde_with::DefaultOnError")]
+            #[serde(default)]
             pub disc_number: Option<u32>,
             pub episode: Option<u32>,
             pub height: Option<u32>,
