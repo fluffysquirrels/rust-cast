@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
 /// Writes the contained `&str` directly (without `"`s) to the Formatter.
+#[expect(dead_code)] // Not used currently
 pub struct DebugInlineStr<'a>(pub &'a str);
 
 impl<'a> Debug for DebugInlineStr<'a> {
