@@ -1849,13 +1849,12 @@ impl<S: TokioAsyncStream> Task<S> {
 
         let request_id = match pd.request_id {
             Some(RequestId::BROADCAST) | None => {
-                if msg_is_broadcast {
-                    return;
+                if !msg_is_broadcast {
+                    tracing::warn!(target: METHOD_PATH,
+                                   ?msg, ?pd, %pd_type,
+                                   "missing request_id in unicast message payload");
                 }
 
-                tracing::warn!(target: METHOD_PATH,
-                               ?msg, ?pd, %pd_type,
-                               "missing request_id in unicast message payload");
                 return;
             },
             Some(id) => id,
@@ -1866,14 +1865,12 @@ impl<S: TokioAsyncStream> Task<S> {
         // TODO: Do broadcast messages ever have request_id?
 
         let Some(request_state) = proj.requests_map.remove(&request_id) else {
-            if msg_is_broadcast {
-                return;
+            if !msg_is_broadcast {
+                tracing::warn!(target: METHOD_PATH,
+                               request_id = request_id.inner(),
+                               ?msg, ?pd, %pd_type,
+                               "missing request state");
             }
-
-            tracing::warn!(target: METHOD_PATH,
-                           request_id = request_id.inner(),
-                           ?msg, ?pd, %pd_type,
-                           "missing request state");
             return;
         };
 
