@@ -623,8 +623,12 @@ pub mod media {
 
         impl QueueItem {
             pub fn from_url(url: &str) -> QueueItem {
+                Self::from_media(Media::from_url(url))
+            }
+
+            pub fn from_media(media: Media) -> QueueItem {
                 QueueItem {
-                    media: Some(Media::from_url(url)),
+                    media: Some(media),
                     .. QueueItem::default()
                 }
             }

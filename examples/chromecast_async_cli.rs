@@ -6,7 +6,7 @@ use rust_cast::{
     self as lib,
     async_client::{self as client, Client, Error, MediaSession, Result},
     message::{EndpointId, Namespace},
-    payload::{self, media::{CustomData, ItemId}},
+    payload::{self, media::{CustomData, ItemId, Seconds, TrackId}},
     /* function_path, named, */
 };
 use tokio::{
@@ -153,8 +153,14 @@ struct MediaQueueLoadArgs {
 
 #[derive(clap::Args, Clone, Debug)]
 struct QueueItemsArgs {
-    #[arg(long = "url")]
-    urls: Vec<String>,
+    #[arg(long)]
+    url: Option<String>,
+
+    #[arg(long)]
+    subs_url: Option<String>,
+
+    #[arg(long)]
+    start_time: Option<f64>,
 
     /// If present, parsed as Vec<payload::media::QueueItem>
     #[arg(long)]
@@ -847,10 +853,30 @@ impl QueueItemsArgs {
     {
         Ok(if let Some(ref items_json) = self.items_json {
             json5::from_str(items_json)?
+        } else if let Some(ref url) = self.url {
+            let mut media = payload::media::Media::from_url(url);
+
+            let mut has_subs: bool = false;
+            if let Some(ref su) = self.subs_url {
+                let st = payload::media::Track {
+                    // language: Some("lang".to_string()),
+                    // name: Some("name".to_string()),
+                    .. payload::media::Track::vtt_subtitles_from_url(su)
+                };
+                media = media.with_track(st)?;
+                has_subs = true;
+            }
+
+            let item = payload::media::QueueItem {
+                active_track_ids: if has_subs { Some(vec![TrackId::FIRST]) } else { None },
+                media: Some(media),
+                start_time: self.start_time.map(|f| Seconds(f)),
+                .. payload::media::QueueItem::default()
+            };
+
+            vec![item]
         } else {
-            self.urls.iter()
-                .map(|url| payload::media::QueueItem::from_url(url))
-                .collect()
+            bail!("QueueItemsArgs::to_items: no media info");
         })
     }
 }
