@@ -32,6 +32,8 @@ byteorder = "1.4.3"
 bytes = "1.5.0"
 chrono = "0.4.34"
 clap = { optional = true, version = "4.5.0", features = ["derive"] }
+clap_complete = { optional = true, version = "4.5.59" }
+clap_complete_nushell = { optional = true, version = "4.5.9" }
 csscolorparser = { version = "0.6.2", features = ["serde"] }
 dns-parser = "0.8.0"
 function_name = "0.3.0"
@@ -76,5 +78,5 @@ protobuf-codegen = "=3.2.0"
 
 [features]
 default = ["clap", "thread_safe"]
-clap = ["dep:clap"]
+clap = ["dep:clap", "dep:clap_complete", "dep:clap_complete_nushell"]
 thread_safe = []

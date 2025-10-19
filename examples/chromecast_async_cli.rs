@@ -1,5 +1,5 @@
 use anyhow::bail;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use csscolorparser::Color;
 use futures::StreamExt;
 use rust_cast::{
@@ -15,20 +15,30 @@ use tokio::{
 };
 use tokio_util::either::Either;
 
+
 #[derive(clap::Parser, Clone, Debug)]
 struct Args {
     #[command(subcommand)]
     command: Command,
+//
+//    #[clap(flatten)]
+//    target: lib::args::TargetArgs,
+}
 
+/// Args common to all cast commands.
+#[derive(clap::Args, Clone, Debug)]
+struct CastCommonArgs {
     #[clap(flatten)]
     target: lib::args::TargetArgs,
 }
 
 #[derive(clap::Subcommand, Clone, Debug)]
 enum Command {
-    AppStop,
+    Completion(CompletionArgs),
+
+    AppStop(CastCommonArgs),
     Demo(DemoArgs),
-    Heartbeat,
+    Heartbeat(CastCommonArgs),
 
     /// Update the current active tracks, or text track style.
     ///
@@ -52,9 +62,9 @@ enum Command {
     #[clap(verbatim_doc_comment)]
     MediaEditTracksInfo(MediaEditTracksInfoArgs),
 
-    MediaLaunch,
+    MediaLaunch(CastCommonArgs),
     MediaLoad(MediaLoadArgs),
-    MediaQueueGetItemIds,
+    MediaQueueGetItemIds(CastCommonArgs),
     MediaQueueGetItems(MediaQueueGetItemsArgs),
     MediaQueueInsert(MediaQueueInsertArgs),
     MediaQueueJump(MediaQueueJumpArgs),
@@ -62,19 +72,37 @@ enum Command {
     MediaQueueRemove(MediaQueueRemoveArgs),
     MediaQueueReorder(MediaQueueReorderArgs),
     // TODO: MediaQueueUpdate(MediaQueueUpdateArgs),
-    Pause,
-    Play,
+    Pause(CastCommonArgs),
+    Play(CastCommonArgs),
     Seek(SeekArgs),
     SetPlaybackRate(SetPlaybackRateArgs),
     SetVolume(SetVolumeArgs),
     Status(StatusArgs),
-    Stop,
+    Stop(CastCommonArgs),
+}
+
+#[derive(clap::Args, Clone, Debug)]
+struct CompletionArgs {
+    shell: Shell,
+    // TODO: Bin name.
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+enum Shell {
+    Bash,
+
+    /// Short alias "nu".
+    #[value(alias = "nu")]
+    Nushell,
 }
 
 #[derive(clap::Args, Clone, Debug)]
 struct DemoArgs {
     #[arg(long)]
     no_stop: bool,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -102,12 +130,18 @@ struct MediaEditTracksInfoArgs {
 
     #[clap(flatten)]
     text_track_style: TextTrackStyleArgs,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
 struct MediaLoadArgs {
     #[arg(long)]
     url: String,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -118,6 +152,9 @@ struct MediaQueueGetItemsArgs {
           require_equals = true,
           value_delimiter = ',')]
     items: Vec<ItemId>,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -127,6 +164,9 @@ struct MediaQueueInsertArgs {
 
     #[clap(flatten)]
     items: QueueItemsArgs,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -143,12 +183,18 @@ struct MediaQueueJumpArgs {
 
     #[arg(long, default_value_t = false)]
     prev: bool,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
 struct MediaQueueLoadArgs {
     #[clap(flatten)]
     items: QueueItemsArgs,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -176,6 +222,9 @@ struct MediaQueueRemoveArgs {
           require_equals = true,
           value_delimiter = ',')]
     items: Vec<ItemId>,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -190,6 +239,9 @@ struct MediaQueueReorderArgs {
           require_equals = true,
           value_delimiter = ',')]
     items: Vec<ItemId>,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -202,6 +254,9 @@ struct SetVolumeArgs {
           action = clap::ArgAction::Set, default_missing_value = "true",
           require_equals = true, num_args = 0..=1)]
     mute: Option<bool>,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -213,6 +268,9 @@ struct SeekArgs {
 
     #[arg(long, value_enum)]
     resume_state: Option<payload::media::ResumeState>,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -222,6 +280,9 @@ struct SetPlaybackRateArgs {
 
     #[arg(long)]
     relative_playback_rate: Option<f32>,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -241,6 +302,9 @@ struct StatusArgs {
 
     #[arg(long, default_value_t = false)]
     no_queue_items: bool,
+
+    #[clap(flatten)]
+    common: CastCommonArgs,
 }
 
 #[derive(clap::Args, Clone, Debug)]
@@ -303,59 +367,85 @@ const RECEIVER: EndpointId = EndpointId::DEFAULT_RECEIVER;
 
 
 #[tokio::main]
-// #[named]
 async fn main() -> Result<()> {
     init_logging(/* json: */ false)?;
 
     let args = Args::parse();
-
     tracing::debug!(?args, "args");
 
-    let addr = args.target.resolve_to_socket_addr().await?;
-
-    let config = client::Config::from_addr(addr);
-    let mut client = config.connect().await?;
-
     match args.command {
-        Command::AppStop => app_stop_main(&mut client).await?,
-        Command::Demo(sub_args) => demo_main(&mut client, sub_args).await?,
-        Command::Heartbeat => heartbeat_main(&mut client).await?,
-        Command::MediaEditTracksInfo(sub_args) => media_edit_tracks_info_main(
-                                                      &mut client, sub_args).await?,
-        Command::MediaLaunch => media_launch_main(&mut client).await?,
-        Command::MediaLoad(sub_args) => media_load_main(&mut client, sub_args).await?,
-        Command::MediaQueueGetItemIds => media_queue_get_item_ids_main(&mut client).await?,
-        Command::MediaQueueGetItems(sub_args) => media_queue_get_items_main(
-                                                     &mut client, sub_args).await?,
-        Command::MediaQueueInsert(sub_args) => media_queue_insert_main(
-                                                   &mut client, sub_args).await?,
-        Command::MediaQueueJump(sub_args) => media_queue_jump_main(&mut client, sub_args).await?,
-        Command::MediaQueueLoad(sub_args) => media_queue_load_main(&mut client, sub_args).await?,
-        Command::MediaQueueRemove(sub_args) => media_queue_remove_main(
-                                                   &mut client, sub_args).await?,
-        Command::MediaQueueReorder(sub_args) => media_queue_reorder_main(
-                                                    &mut client, sub_args).await?,
-        Command::Pause => media_pause_main(&mut client).await?,
-        Command::Play => media_play_main(&mut client).await?,
-        Command::Seek(sub_args) => media_seek_main(&mut client, sub_args).await?,
-        Command::SetPlaybackRate(sub_args) => set_playback_rate_main(
-                                                  &mut client, sub_args).await?,
-        Command::SetVolume(sub_args) => set_volume_main(&mut client, sub_args).await?,
-        Command::Status(sub_args) => status_main(&mut client, sub_args).await?,
-        Command::Stop => media_stop_main(&mut client).await?,
-    };
+        Command::Completion(sub_args) => return completion_main(sub_args),
 
-    client.close().await?;
+        Command::AppStop(sub_args) => app_stop_main(sub_args).await?,
+        Command::Demo(sub_args) => demo_main(sub_args).await?,
+        Command::Heartbeat(sub_args) => heartbeat_main(sub_args).await?,
+        Command::MediaEditTracksInfo(sub_args) => media_edit_tracks_info_main(sub_args).await?,
+        Command::MediaLaunch(sub_args) => media_launch_main(sub_args).await?,
+        Command::MediaLoad(sub_args) => media_load_main(sub_args).await?,
+        Command::MediaQueueGetItemIds(sub_args) => media_queue_get_item_ids_main(sub_args).await?,
+        Command::MediaQueueGetItems(sub_args) => media_queue_get_items_main(sub_args).await?,
+        Command::MediaQueueInsert(sub_args) => media_queue_insert_main(sub_args).await?,
+        Command::MediaQueueJump(sub_args) => media_queue_jump_main(sub_args).await?,
+        Command::MediaQueueLoad(sub_args) => media_queue_load_main(sub_args).await?,
+        Command::MediaQueueRemove(sub_args) => media_queue_remove_main(sub_args).await?,
+        Command::MediaQueueReorder(sub_args) => media_queue_reorder_main(sub_args).await?,
+        Command::Pause(sub_args) => media_pause_main(sub_args).await?,
+        Command::Play(sub_args) => media_play_main(sub_args).await?,
+        Command::Seek(sub_args) => media_seek_main(sub_args).await?,
+        Command::SetPlaybackRate(sub_args) => set_playback_rate_main(sub_args).await?,
+        Command::SetVolume(sub_args) => set_volume_main(sub_args).await?,
+        Command::Status(sub_args) => status_main(sub_args).await?,
+        Command::Stop(sub_args) => media_stop_main(sub_args).await?,
+    };
 
     Ok(())
 }
 
-async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
+impl CastCommonArgs {
+    async fn to_client(&self) -> Result<Client> {
+        let addr = self.target.resolve_to_socket_addr().await?;
+        let config = client::Config::from_addr(addr);
+        let client = config.connect().await?;
+        Ok(client)
+    }
+}
+
+
+fn completion_main(sub_args: CompletionArgs) -> Result<()> {
+    let bin = "rcast";
+    let mut cmd = Args::command();
+    let mut out = std::io::stdout().lock();
+
+    clap_complete::generate(sub_args.shell, &mut cmd, bin, &mut out);
+    Ok(())
+}
+
+impl clap_complete::Generator for Shell {
+    fn file_name(&self, name: &str) -> String {
+        self.to_dyn().file_name(name)
+    }
+
+    fn generate(&self, cmd: &clap::Command, buf: &mut dyn std::io::Write) {
+        self.to_dyn().generate(cmd, buf)
+    }
+}
+
+impl Shell {
+    fn to_dyn(self) -> &'static dyn clap_complete::Generator {
+        match self {
+            Shell::Bash => &clap_complete::Shell::Bash,
+            Shell::Nushell => &clap_complete_nushell::Nushell,
+        }
+    }
+}
+
+async fn status_main(sub_args: StatusArgs) -> Result<()> {
+    let mut client = sub_args.common.to_client().await?;
     let status_options = payload::media::GetStatusOptions::default()
                                .with_no_metadata(sub_args.no_metadata)
                                .with_no_queue_items(sub_args.no_queue_items);
 
-    status_single_with_options(client, status_options).await?;
+    status_single_with_options(&mut client, status_options).await?;
 
     if sub_args.follow {
         enum Event {
@@ -386,7 +476,7 @@ async fn status_main(client: &mut Client, sub_args: StatusArgs) -> Result<()> {
         while let Some(event) = merged.next().await {
             match event {
                 Event::PollStatus => {
-                    status_single_with_options(client, status_options).await?;
+                    status_single_with_options(&mut client, status_options).await?;
                 },
                 Event::Update(update) => {
                     if tracing::event_enabled!(tracing::Level::TRACE) {
@@ -459,7 +549,8 @@ async fn status_single_with_options(client: &mut Client,
     Ok(())
 }
 
-async fn app_stop_main(client: &mut Client) -> Result<()> {
+async fn app_stop_main(sub_args: CastCommonArgs) -> Result<()> {
+    let mut client = sub_args.to_client().await?;
     let initial_status = client.receiver_status(RECEIVER).await?;
 
     println!("initial_status = {initial_status:#?}");
@@ -478,7 +569,9 @@ async fn app_stop_main(client: &mut Client) -> Result<()> {
     Ok(())
 }
 
-async fn set_volume_main(client: &mut Client, sub_args: SetVolumeArgs) -> Result<()> {
+async fn set_volume_main(sub_args: SetVolumeArgs) -> Result<()> {
+    let mut client = sub_args.common.to_client().await?;
+
     let level: Option<f32> = sub_args.level;
 
     match level {
@@ -509,8 +602,10 @@ async fn set_volume_main(client: &mut Client, sub_args: SetVolumeArgs) -> Result
     Ok(())
 }
 
-async fn media_edit_tracks_info_main(client: &mut Client, sub_args: MediaEditTracksInfoArgs)
+async fn media_edit_tracks_info_main(sub_args: MediaEditTracksInfoArgs)
 -> Result<()> {
+    let mut client = sub_args.common.to_client().await?;
+
     let args = payload::media::EditTracksInfoRequestArgs {
         active_track_ids: sub_args.active_track_ids,
         text_track_style: if sub_args.set_text_track_style {
@@ -528,44 +623,50 @@ async fn media_edit_tracks_info_main(client: &mut Client, sub_args: MediaEditTra
 
     print_media_status(&media_status);
 
-    status_single(client).await?;
+    status_single(&mut client).await?;
 
     Ok(())
 }
 
-async fn media_launch_main(client: &mut Client) -> Result<()> {
+async fn media_launch_main(sub_args: CastCommonArgs) -> Result<()> {
+    let mut client = sub_args.to_client().await?;
     let _app_session = client.media_get_or_launch_default_app_session(
         RECEIVER).await?;
 
     Ok(())
 }
 
-async fn media_load_main(client: &mut Client, sub_args: MediaLoadArgs) -> Result<()> {
+async fn media_load_main(sub_args: MediaLoadArgs) -> Result<()> {
+    let mut client = sub_args.common.to_client().await?;
+
     let load_args = payload::media::LoadRequestArgs::from_url(
         &sub_args.url);
 
-    let _media_session = media_load(client, load_args).await?;
+    let _media_session = media_load(&mut client, load_args).await?;
 
     Ok(())
 }
 
-async fn media_pause_main(client: &mut Client) -> Result<()> {
+async fn media_pause_main(sub_args: CastCommonArgs) -> Result<()> {
+    let mut client = sub_args.to_client().await?;
     let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_pause(media_session).await?;
     print_media_status(&media_status);
     Ok(())
 }
 
-async fn media_play_main(client: &mut Client) -> Result<()> {
+async fn media_play_main(sub_args: CastCommonArgs) -> Result<()> {
+    let mut client = sub_args.to_client().await?;
     let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_play(media_session).await?;
     print_media_status(&media_status);
     Ok(())
 }
 
-async fn media_queue_get_items_main(client: &mut Client, sub_args: MediaQueueGetItemsArgs)
+async fn media_queue_get_items_main(sub_args: MediaQueueGetItemsArgs)
 -> Result<()>
 {
+    let mut client = sub_args.common.to_client().await?;
     let args = payload::media::QueueGetItemsRequestArgs {
         custom_data: CustomData::default(),
         item_ids: sub_args.items,
@@ -577,16 +678,19 @@ async fn media_queue_get_items_main(client: &mut Client, sub_args: MediaQueueGet
     Ok(())
 }
 
-async fn media_queue_get_item_ids_main(client: &mut Client) -> Result<()>
+async fn media_queue_get_item_ids_main(sub_args: CastCommonArgs) -> Result<()>
 {
+    let mut client = sub_args.to_client().await?;
     let media_session = client.media_get_media_session(RECEIVER).await?;
     let item_ids = client.media_queue_get_item_ids(media_session).await?;
     println!("Queue item IDs: {item_ids:#?}");
     Ok(())
 }
 
-async fn media_queue_jump_main(client: &mut Client, sub_args: MediaQueueJumpArgs) -> Result<()> {
+async fn media_queue_jump_main(sub_args: MediaQueueJumpArgs) -> Result<()> {
     use payload::media::QueueUpdateRequestArgs;
+
+    let mut client = sub_args.common.to_client().await?;
 
     let args: QueueUpdateRequestArgs =
         if let Some(item_id) = sub_args.item {
@@ -606,14 +710,16 @@ async fn media_queue_jump_main(client: &mut Client, sub_args: MediaQueueJumpArgs
     let media_status = client.media_queue_update(media_session, args).await?;
     print_media_status(&media_status);
 
-    status_single(client).await?;
+    status_single(&mut client).await?;
 
     Ok(())
 }
 
-async fn media_queue_insert_main(client: &mut Client, sub_args: MediaQueueInsertArgs)
+async fn media_queue_insert_main(sub_args: MediaQueueInsertArgs)
 -> Result<()>
 {
+    let mut client = sub_args.common.to_client().await?;
+
     let args = payload::media::QueueInsertRequestArgs {
         custom_data: CustomData::default(),
         insert_before: sub_args.before,
@@ -625,12 +731,14 @@ async fn media_queue_insert_main(client: &mut Client, sub_args: MediaQueueInsert
     let media_status = client.media_queue_insert(media_session, args).await?;
     print_media_status(&media_status);
 
-    status_single(client).await?;
+    status_single(&mut client).await?;
 
     Ok(())
 }
 
-async fn media_queue_load_main(client: &mut Client, sub_args: MediaQueueLoadArgs) -> Result<()> {
+async fn media_queue_load_main(sub_args: MediaQueueLoadArgs) -> Result<()> {
+    let mut client = sub_args.common.to_client().await?;
+
     let args = payload::media::QueueLoadRequestArgs {
         current_time: None,
         custom_data: CustomData::default(),
@@ -647,14 +755,16 @@ async fn media_queue_load_main(client: &mut Client, sub_args: MediaQueueLoadArgs
     let media_status = client.media_queue_load(app_session, args).await?;
     print_media_status(&media_status);
 
-    status_single(client).await?;
+    status_single(&mut client).await?;
 
     Ok(())
 }
 
-async fn media_queue_remove_main(client: &mut Client, sub_args: MediaQueueRemoveArgs)
+async fn media_queue_remove_main(sub_args: MediaQueueRemoveArgs)
 -> Result<()>
 {
+    let mut client = sub_args.common.to_client().await?;
+
     let args = payload::media::QueueRemoveRequestArgs {
         custom_data: CustomData::default(),
 
@@ -672,14 +782,16 @@ async fn media_queue_remove_main(client: &mut Client, sub_args: MediaQueueRemove
     let media_status = client.media_queue_remove(media_session, args).await?;
     print_media_status(&media_status);
 
-    status_single(client).await?;
+    status_single(&mut client).await?;
 
     Ok(())
 }
 
-async fn media_queue_reorder_main(client: &mut Client, sub_args: MediaQueueReorderArgs)
+async fn media_queue_reorder_main(sub_args: MediaQueueReorderArgs)
 -> Result<()>
 {
+    let mut client = sub_args.common.to_client().await?;
+
     let args = payload::media::QueueReorderRequestArgs {
         custom_data: CustomData::default(),
 
@@ -698,19 +810,23 @@ async fn media_queue_reorder_main(client: &mut Client, sub_args: MediaQueueReord
     let media_status = client.media_queue_reorder(media_session, args).await?;
     print_media_status(&media_status);
 
-    status_single(client).await?;
+    status_single(&mut client).await?;
 
     Ok(())
 }
 
-async fn media_stop_main(client: &mut Client) -> Result<()> {
+async fn media_stop_main(sub_args: CastCommonArgs) -> Result<()> {
+    let mut client = sub_args.to_client().await?;
+
     let media_session = client.media_get_media_session(RECEIVER).await?;
     let media_status = client.media_stop(media_session).await?;
     print_media_status(&media_status);
     Ok(())
 }
 
-async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> {
+async fn media_seek_main(sub_args: SeekArgs) -> Result<()> {
+    let mut client = sub_args.common.to_client().await?;
+
     let media_session = client.media_get_media_session(RECEIVER).await?;
     let seek_args = payload::media::SeekRequestArgs {
         custom_data: CustomData::default(),
@@ -725,8 +841,10 @@ async fn media_seek_main(client: &mut Client, sub_args: SeekArgs) -> Result<()> 
 }
 
 // TODO: Test.
-async fn set_playback_rate_main(client: &mut Client, sub_args: SetPlaybackRateArgs) -> Result<()>
+async fn set_playback_rate_main(sub_args: SetPlaybackRateArgs) -> Result<()>
 {
+    let mut client = sub_args.common.to_client().await?;
+
     let media_session = client.media_get_media_session(RECEIVER).await?;
     let args = payload::media::SetPlaybackRateRequestArgs {
         custom_data: CustomData::default(),
@@ -739,15 +857,17 @@ async fn set_playback_rate_main(client: &mut Client, sub_args: SetPlaybackRateAr
     Ok(())
 }
 
-async fn demo_main(client: &mut Client, sub_args: DemoArgs) -> Result<()> {
+async fn demo_main(sub_args: DemoArgs) -> Result<()> {
+    let mut client = sub_args.common.to_client().await?;
+
     let load_args = payload::media::LoadRequestArgs::from_url(
         "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4");
 
-    let media_session = media_load(client, load_args).await?;
+    let media_session = media_load(&mut client, load_args).await?;
 
     sleep(std::time::Duration::from_secs(2)).await;
 
-    status_single(client).await?;
+    status_single(&mut client).await?;
 
     sleep(std::time::Duration::from_secs(2)).await;
 
@@ -758,18 +878,20 @@ async fn demo_main(client: &mut Client, sub_args: DemoArgs) -> Result<()> {
 
         sleep(std::time::Duration::from_secs(1)).await;
 
-        status_single(client).await?;
+        status_single(&mut client).await?;
 
         sleep(std::time::Duration::from_secs(2)).await;
 
-        status_single(client).await?;
+        status_single(&mut client).await?;
     }
 
     Ok(())
 }
 
-async fn heartbeat_main(client: &mut Client) -> Result<()>
+async fn heartbeat_main(sub_args: CastCommonArgs) -> Result<()>
 {
+    let mut client = sub_args.to_client().await?;
+
     client.connection_connect(RECEIVER).await?;
 
     pause().await?;
