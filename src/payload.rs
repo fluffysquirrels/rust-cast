@@ -413,8 +413,6 @@ pub mod media {
         }
 
         mod media_commands {
-            #![allow(unused_braces)] // modular_bitfield::bitfield macro triggers this on some compiler versions.
-
             use serde::{Serialize, Serializer, Deserialize, Deserializer};
 
             /// Bitfield of supported media commands.
